@@ -94,7 +94,7 @@ function parseObjectIdsFromText(text: string): string[] {
   );
 }
 
-function generateMockModelResult(): Seed['modelResult'] {
+function generateMockModelResult() {
   const conclusions: ValidConclusion[] = ['suggest_clear', 'suggest_keep'];
   const conclusion = conclusions[Math.floor(Math.random() * conclusions.length)];
   const hitTags: Record<ValidConclusion, string[]> = {
@@ -115,7 +115,7 @@ function generateMockModelResult(): Seed['modelResult'] {
   };
 
   return {
-    conclusion,
+    conclusion: conclusion as ModelConclusion,
     confidence: Math.round((Math.random() * 20 + 75)) / 100,
     hitTag: hitTags[conclusion][Math.floor(Math.random() * hitTags[conclusion].length)],
     reason: reasons[conclusion][Math.floor(Math.random() * reasons[conclusion].length)],

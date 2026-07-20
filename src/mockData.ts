@@ -1,4 +1,4 @@
-import type { Seed, ApiDraft, ObjectType, CountryType, IndustryType, DeliveryStatus, SeedStatus, ExecutionStatus, SecondaryCCR, SecondaryCCRType, Task, AuditSourceType } from './types';
+import type { Seed, ApiDraft, ObjectType, CountryType, IndustryType, DeliveryStatus, SeedStatus, ExecutionStatus, SecondaryCCR, SecondaryCCRType, Task, AuditSourceType, AdLevelType } from './types';
 
 const countryOptions = ['US', 'GB', 'ID', 'VN', 'TH', 'BR', 'JP', 'KR', 'DE', 'FR'] as const;
 const industryOptions = ['ecommerce', 'game', 'finance', 'health', 'education', 'entertainment', 'travel', 'food'] as const;
@@ -87,8 +87,8 @@ function createSeed(index: number, seedType: 'material' | 'creative', isHighPrio
     ? Math.round((0.75 + Math.random() * 0.24) * 100) / 100
     : randomCCR();
   const adLevel = isHighPriority
-    ? (index < 100 ? 'P0' : 'P1')
-    : (adLevels[index % adLevels.length] as string);
+    ? (index < 100 ? 'P0' : 'P1') as AdLevelType
+    : (adLevels[index % adLevels.length] as AdLevelType);
   const deliveryStatus: DeliveryStatus = isHighPriority ? 'delivering' : (Math.random() > 0.5 ? 'delivering' : 'no_delivery');
   const auditSource = auditSources[index % auditSources.length];
   const policyCode = isHighPriority ? 'POLICY_001' : policyCodes[index % policyCodes.length];
