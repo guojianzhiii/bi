@@ -1,0 +1,256 @@
+{
+  "description": "机审运营工具 Mock 数据 - 政策收严 + 高优先级筛选场景",
+  "totalSeeds": 400,
+  "materialSeeds": 200,
+  "creativeSeeds": 200,
+  "highPrioritySeeds": 100,
+  "tagBatches": [
+    {
+      "batchName": "policy_tighten_critical_seed_202607",
+      "capability": "hermes",
+      "tagId": "tag_policy_tighten_202607",
+      "sceneType": "tighten",
+      "description": "政策收严场景下，针对高优先级种子执行的 Hermes Tag",
+      "targetCount": 100,
+      "filterConditions": {
+        "policyCode": "POLICY_001",
+        "provision": "PROV_A",
+        "ccrMin": 0.75,
+        "adLevel": ["P0", "P1"],
+        "industries": ["finance", "game", "health"],
+        "countries": ["US", "JP", "KR", "DE"],
+        "deliveryStatus": "delivering"
+      },
+      "modelResults": {
+        "suggest_clear": 33,
+        "suggest_keep": 34,
+        "need_review": 33
+      }
+    },
+    {
+      "batchName": "policy_relax_appeal_batch_202607",
+      "capability": "hermes",
+      "tagId": "tag_policy_relax_202607",
+      "sceneType": "relax",
+      "description": "政策放宽场景下，针对历史拒绝种子执行的 Hermes Tag",
+      "targetCount": 200,
+      "filterConditions": {
+        "policyCode": ["POLICY_001", "POLICY_002", "POLICY_003"],
+        "provision": ["PROV_A", "PROV_B", "PROV_C"],
+        "deliveryStatus": "no_delivery"
+      },
+      "modelResults": {
+        "suggest_clear": 67,
+        "suggest_keep": 66,
+        "need_review": 67
+      }
+    },
+    {
+      "batchName": "workflow_compliance_check_202607",
+      "capability": "workflow",
+      "tagId": "workflow_compliance_check_001",
+      "sceneType": "tighten",
+      "description": "合规检查工作流，用于政策收严场景下的多模型串联检查",
+      "targetCount": 100,
+      "filterConditions": {
+        "industry": ["finance", "health"],
+        "adLevel": ["P0", "P1"]
+      },
+      "modelResults": {
+        "suggest_clear": 33,
+        "suggest_keep": 34,
+        "need_review": 33
+      }
+    }
+  ],
+  "highPrioritySeedTemplate": {
+    "id": "${seedType}_seed_${index}",
+    "seedType": "material|creative",
+    "objectId": "obj_${seedType}_${index}",
+    "creativeKey": "ck_${seedType}_${index}",
+    "objectType": "image|video|text|landing_page",
+    "country": "US|JP|KR|DE",
+    "industry": "finance|game|health",
+    "policyCode": "POLICY_001",
+    "provision": "PROV_A",
+    "adLevel": "P0|P1",
+    "ccr": ">= 0.75",
+    "deliveryStatus": "delivering",
+    "seedStatus": "active",
+    "executionStatus": "not_executed|success|executing|failed",
+    "executionCapability": "hermes|workflow",
+    "tagId": "tag_${random}|workflow_${random}",
+    "modelResult": {
+      "conclusion": "suggest_clear|suggest_keep|need_review",
+      "confidence": "0.75-0.95",
+      "hitTag": "policy_relax_appeal_pass|risk_level_decreased|compliance_requirement_removed|critical_risk_confirmed|risk_level_increased|new_policy_violation|policy_ambiguous|edge_case_detected|human_review_required",
+      "reason": "模型判断原因文本",
+      "suggestClear": true|false
+    }
+  },
+  "sampleSeeds": [
+    {
+      "id": "material_seed_0000",
+      "seedType": "material",
+      "objectType": "image",
+      "country": "US",
+      "industry": "finance",
+      "policyCode": "POLICY_001",
+      "provision": "PROV_A",
+      "adLevel": "P0",
+      "ccr": 0.88,
+      "deliveryStatus": "delivering",
+      "seedStatus": "active",
+      "executionStatus": "success",
+      "executionCapability": "hermes",
+      "tagId": "tag_policy_tighten_202607",
+      "modelResult": {
+        "conclusion": "suggest_clear",
+        "confidence": 0.92,
+        "hitTag": "risk_level_decreased",
+        "reason": "风险等级降低至可接受范围，建议清除种子库结果。",
+        "suggestClear": true
+      }
+    },
+    {
+      "id": "material_seed_0001",
+      "seedType": "material",
+      "objectType": "video",
+      "country": "JP",
+      "industry": "game",
+      "policyCode": "POLICY_001",
+      "provision": "PROV_A",
+      "adLevel": "P0",
+      "ccr": 0.92,
+      "deliveryStatus": "delivering",
+      "seedStatus": "active",
+      "executionStatus": "success",
+      "executionCapability": "hermes",
+      "tagId": "tag_policy_tighten_202607",
+      "modelResult": {
+        "conclusion": "suggest_keep",
+        "confidence": 0.88,
+        "hitTag": "critical_risk_confirmed",
+        "reason": "该素材仍符合收严后的风险定义，建议保留种子结果继续复用。",
+        "suggestClear": false
+      }
+    },
+    {
+      "id": "creative_seed_0000",
+      "seedType": "creative",
+      "objectType": "text",
+      "country": "KR",
+      "industry": "health",
+      "policyCode": "POLICY_001",
+      "provision": "PROV_A",
+      "adLevel": "P1",
+      "ccr": 0.85,
+      "deliveryStatus": "delivering",
+      "seedStatus": "active",
+      "executionStatus": "success",
+      "executionCapability": "workflow",
+      "tagId": "workflow_compliance_check_001",
+      "modelResult": {
+        "conclusion": "need_review",
+        "confidence": 0.78,
+        "hitTag": "policy_ambiguous",
+        "reason": "政策边界模糊，需要人工复核确认。",
+        "suggestClear": false
+      }
+    },
+    {
+      "id": "material_seed_0050",
+      "seedType": "material",
+      "objectType": "landing_page",
+      "country": "GB",
+      "industry": "ecommerce",
+      "policyCode": "POLICY_002",
+      "provision": "PROV_B",
+      "adLevel": "P2",
+      "ccr": 0.45,
+      "deliveryStatus": "no_delivery",
+      "seedStatus": "active",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "creative_seed_0050",
+      "seedType": "creative",
+      "objectType": "image",
+      "country": "ID",
+      "industry": "food",
+      "policyCode": "POLICY_003",
+      "provision": "PROV_C",
+      "adLevel": "P3",
+      "ccr": 0.62,
+      "deliveryStatus": "delivering",
+      "seedStatus": "active",
+      "executionStatus": "executing",
+      "executionCapability": "hermes",
+      "tagId": "tag_456"
+    }
+  ],
+  "tagDefinitions": {
+    "policy_relax_appeal_pass": {
+      "name": "政策放宽-申诉通过",
+      "description": "该素材命中政策放宽后的允许表达，历史拒绝结果不应继续复用",
+      "scene": "relax"
+    },
+    "risk_level_decreased": {
+      "name": "风险等级降低",
+      "description": "风险等级降低至可接受范围，建议清除种子库结果",
+      "scene": "relax"
+    },
+    "compliance_requirement_removed": {
+      "name": "合规要求移除",
+      "description": "合规要求已移除，该素材不再需要进入种子库",
+      "scene": "relax"
+    },
+    "critical_risk_confirmed": {
+      "name": "高风险确认",
+      "description": "该素材仍符合收严后的风险定义，建议保留种子结果继续复用",
+      "scene": "tighten"
+    },
+    "risk_level_increased": {
+      "name": "风险等级升高",
+      "description": "风险等级升高，需要继续监控该素材",
+      "scene": "tighten"
+    },
+    "new_policy_violation": {
+      "name": "新政策违规",
+      "description": "命中新政策违规项，建议保留种子结果",
+      "scene": "tighten"
+    },
+    "policy_ambiguous": {
+      "name": "政策边界模糊",
+      "description": "政策边界模糊，需要人工复核确认",
+      "scene": "both"
+    },
+    "edge_case_detected": {
+      "name": "边缘案例",
+      "description": "检测到边缘案例，建议人工评估",
+      "scene": "both"
+    },
+    "human_review_required": {
+      "name": "需人工审核",
+      "description": "涉及敏感内容，需要人工审核确认",
+      "scene": "both"
+    }
+  },
+  "approvalRequestTemplate": {
+    "id": "approval_${timestamp}_${random}",
+    "batchId": "${batchName}",
+    "seedIds": ["seed_1", "seed_2", ...],
+    "reason": "处置原因描述",
+    "sceneType": "relax|tighten",
+    "totalCount": 100,
+    "clearSuggestedCount": 33,
+    "keepSuggestedCount": 34,
+    "reviewRequiredCount": 33,
+    "status": "pending|approved|rejected",
+    "feishuApprovalUrl": "https://www.feishu.cn/approval/detail/${approvalId}",
+    "createdAt": "2026-07-03 10:00:00",
+    "approvedBy": "机审运营 Leader",
+    "approvedAt": "2026-07-03 11:00:00",
+    "rejectReason": "拒绝原因"
+  }
+}
