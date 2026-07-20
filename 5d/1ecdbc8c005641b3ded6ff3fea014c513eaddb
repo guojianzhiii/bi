@@ -1,0 +1,129 @@
+src/App.tsx
+  s_8f218f278f01a9::t_69bcae926c294d 97,118 gitai:{"mixed_line_ranges":[],"operations":[{"operation_id":"6a5df50539d83eedb56db80d","tool_type":"agent","tool_id":"Edit","line_ranges":[{"Single":97},{"Single":118}]}]}
+src/mockData.ts
+  s_8f218f278f01a9::t_78d2e3a4907628 1,90-91 gitai:{"mixed_line_ranges":[],"operations":[{"operation_id":"6a5df53839d83eedb56db819","tool_type":"agent","tool_id":"Edit","line_ranges":[{"Single":1},{"Range":[90,91]}]}]}
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5d1ecdbc8c005641b3ded6ff3fea014c513eaddb",
+  "prompts": {},
+  "humans": {
+    "h_fa1455eec3c72e": {
+      "author": "guojianzhiii <guojianzhiii@users.noreply.github.com>"
+    }
+  },
+  "sessions": {
+    "s_8f218f278f01a9": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a3e4600b4d46ccee92a386a",
+        "model": "Doubao-Seed-2.1-Turbo__dev"
+      },
+      "human_author": "guojianzhiii <guojianzhiii@users.noreply.github.com>"
+    }
+  },
+  "attestation_metadata": {
+    "src/App.tsx": [
+      {
+        "hash": "s_8f218f278f01a9::t_69bcae926c294d",
+        "line_ranges": [
+          {
+            "Single": 97
+          },
+          {
+            "Single": 118
+          }
+        ],
+        "mixed_line_ranges": [],
+        "operations": [
+          {
+            "operation_id": "6a5df50539d83eedb56db80d",
+            "tool_type": "agent",
+            "tool_id": "Edit",
+            "line_ranges": [
+              {
+                "Single": 97
+              },
+              {
+                "Single": 118
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "src/mockData.ts": [
+      {
+        "hash": "s_8f218f278f01a9::t_78d2e3a4907628",
+        "line_ranges": [
+          {
+            "Single": 1
+          },
+          {
+            "Range": [
+              90,
+              91
+            ]
+          }
+        ],
+        "mixed_line_ranges": [],
+        "operations": [
+          {
+            "operation_id": "6a5df53839d83eedb56db819",
+            "tool_type": "agent",
+            "tool_id": "Edit",
+            "line_ranges": [
+              {
+                "Single": 1
+              },
+              {
+                "Range": [
+                  90,
+                  91
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "remote_transcripts": {
+    "s_8f218f278f01a9": {
+      "tool": "trae",
+      "conversation_id": "6a3e4600b4d46ccee92a386a",
+      "session_id": "6a3e4600b4d46ccee92a386a",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    },
+    "s_8f218f278f01a9::t_69bcae926c294d": {
+      "tool": "trae",
+      "conversation_id": "6a3e4600b4d46ccee92a386a",
+      "session_id": "6a3e4600b4d46ccee92a386a",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    },
+    "s_8f218f278f01a9::t_78d2e3a4907628": {
+      "tool": "trae",
+      "conversation_id": "6a3e4600b4d46ccee92a386a",
+      "session_id": "6a3e4600b4d46ccee92a386a",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    },
+    "s_8f218f278f01a9::t_c5b0224a2aa563": {
+      "tool": "trae",
+      "conversation_id": "6a3e4600b4d46ccee92a386a",
+      "session_id": "6a3e4600b4d46ccee92a386a",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    },
+    "s_8f218f278f01a9::t_da33cfe5f399ec": {
+      "tool": "trae",
+      "conversation_id": "6a3e4600b4d46ccee92a386a",
+      "session_id": "6a3e4600b4d46ccee92a386a",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    }
+  }
+}
