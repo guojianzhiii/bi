@@ -20,17 +20,25 @@ export type ExecutionCapability = 'hermes' | 'workflow';
 
 export type CCRArea = 'below_market' | 'above_market';
 
+export type CcrMetricType =
+  | 'p0_ccr'
+  | 'p1_ccr'
+  | 'p0_sexual_ccr'
+  | 'p0_fraud_ccr'
+  | 'p0_counterfeit_ccr'
+  | 'p0_gambling_ccr'
+  | 'p1_vulgar_ccr'
+  | 'p1_misleading_ccr'
+  | 'p1_discomforting_ccr';
+
 export type SecondaryCCRType = 
   | 'p0_sexual_ccr' 
   | 'p0_fraud_ccr' 
-  | 'p0_vulgar_ccr' 
-  | 'p0_political_ccr' 
-  | 'p0_adult_ccr'
-  | 'p1_sexual_ccr'
-  | 'p1_fraud_ccr'
+  | 'p0_counterfeit_ccr'
+  | 'p0_gambling_ccr'
   | 'p1_vulgar_ccr'
-  | 'p1_political_ccr'
-  | 'p1_adult_ccr';
+  | 'p1_misleading_ccr'
+  | 'p1_discomforting_ccr';
 
 export type DeliveryStatus = 'delivering' | 'no_delivery';
 
@@ -41,13 +49,16 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 export type BatchApprovalStatus = 'unsubmitted' | 'pending_review' | 'approved' | 'rejected';
 
 export type TaskStatus = 
-  | 'draft' 
-  | 'pending_approval' 
+  | 'pending_model'
   | 'model_executing' 
   | 'model_completed' 
-  | 'disposal_pending' 
+  | 'approval_approved'
+  | 'approval_rejected'
   | 'disposal_completed' 
-  | 'abandoned';
+  | 'abandoned'
+  | 'draft'
+  | 'pending_approval'
+  | 'disposal_pending';
 
 export interface Task {
   id: string;
@@ -57,6 +68,7 @@ export interface Task {
   status: TaskStatus;
   seedCount: number;
   seedIds?: string[];
+  submitter?: string;
   filterConditions: FilterCondition;
   executionConfig?: ExecutionConfig;
   createdAt: string;
@@ -121,6 +133,10 @@ export interface FilterCondition {
   provision?: string[];
   p0CCRArea?: CCRArea[];
   p1CCRArea?: CCRArea[];
+  ccrRanges?: Partial<Record<CcrMetricType, {
+    gte?: number;
+    lte?: number;
+  }>>;
   secondaryCCR?: SecondaryCCRType[];
   deliveryStatus?: DeliveryStatus[];
   seedStatus?: SeedStatus[];

@@ -1,11 +1,9 @@
 import { useMemo, useState } from 'react';
 import {
   Alert,
-  Badge,
   Button,
   Card,
   Col,
-  Collapse,
   Descriptions,
   Drawer,
   Input,
@@ -24,42 +22,54 @@ import {
 } from 'antd';
 import type { TableProps } from 'antd';
 import {
+  CheckCircleOutlined,
   DeleteOutlined,
   EyeOutlined,
-  HistoryOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
   PlusCircleOutlined,
-  WarningOutlined,
+  QuestionCircleOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
-import type * as Types from './types.ts';
+import type {
+  CcrMetricType,
+  ExecutionCapability,
+  ExecutionConfig,
+  FilterCondition,
+  ModelConclusion,
+  OperationLog,
+  SceneType,
+  Seed,
+  Task,
+  TaskStatus,
+} from './types.ts';
 import * as MockData from './mockData.ts';
-const { Panel } = Collapse;
+import './App.css';
 
-type NavKey = 'taskCenter' | 'createTask' | 'executeModel' | 'disposeSeeds';
+type NavKey = 'createTask' | 'taskCenter';
 type ValidConclusion = 'suggest_clear' | 'suggest_keep';
+type CcrOperator = 'gte' | 'lte';
+type CcrRange = NonNullable<FilterCondition['ccrRanges']>[CcrMetricType];
+type TagOption = {
+  id: string;
+  name: string;
+  scene: SceneType | 'both';
+};
+type TaskFilters = {
+  sceneType?: SceneType;
+  taskId?: string;
+  market?: string[];
+  objectType?: string[];
+  createdStart?: string;
+  createdEnd?: string;
+};
 
-type ApprovalRequest = Types.ApprovalRequest;
-type BatchApproval = Types.BatchApproval;
-type CCRArea = Types.CCRArea;
-type ExecutionCapability = Types.ExecutionCapability;
-type ExecutionConfig = Types.ExecutionConfig;
-type FilterCondition = Types.FilterCondition;
-type ModelConclusion = Types.ModelConclusion;
-type OperationLog = Types.OperationLog;
-type SceneType = Types.SceneType;
-type Seed = Types.Seed;
-type Task = Types.Task;
-type TaskStatus = Types.TaskStatus;
+const defaultSubmitter = '机审运营';
 
 const {
-  approvalStatusLabels,
   auditSourceLabels,
-  batchApprovalStatusLabels,
   capabilityLabels,
-  ccrAreaLabels,
   countryLabels,
-  deliveryStatusLabels,
   hermesTags,
   industryLabels,
   mockTasks,
@@ -67,13 +77,39 @@ const {
   objectTypeLabels,
   policyCodes,
   provisions,
-  secondaryCCRLabels,
   seeds: initialSeeds,
   seedStatusLabels,
   seedTypeLabels,
   taskStatusLabels,
   workflowTags,
 } = MockData;
+
+const ccrMetricLabels: Record<CcrMetricType, string> = {
+  p0_ccr: 'P0 CCR',
+  p1_ccr: 'P1 CCR',
+  p0_sexual_ccr: 'P0 Sexual CCR',
+  p0_fraud_ccr: 'P0 Fraud CCR',
+  p0_counterfeit_ccr: 'P0 Counterfeit CCR',
+  p0_gambling_ccr: 'P0 Gambling CCR',
+  p1_vulgar_ccr: 'P1 Vulgar CCR',
+  p1_misleading_ccr: 'P1 Misleading CCR',
+  p1_discomforting_ccr: 'P1 Discomforting CCR',
+};
+
+const tightenCcrMetrics = Object.keys(ccrMetricLabels) as CcrMetricType[];
+
+const statusColorMap: Record<TaskStatus, string> = {
+  pending_model: 'blue',
+  model_executing: 'processing',
+  model_completed: 'purple',
+  approval_approved: 'green',
+  approval_rejected: 'red',
+  disposal_completed: 'green',
+  abandoned: 'default',
+  draft: 'default',
+  pending_approval: 'orange',
+  disposal_pending: 'gold',
+};
 
 function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -103,14 +139,14 @@ function generateMockModelResult() {
   };
   const reasons: Record<ValidConclusion, string[]> = {
     suggest_clear: [
-      '该素材命中政策放宽后的允许表达，历史拒绝结果不应继续复用。',
-      '风险等级降低至可接受范围，建议清除种子库结果。',
-      '合规要求已移除，该素材不再需要进入种子库。',
+      '模型判断该种子在新策略下不应继续复用，建议置为无效。',
+      '风险等级已降低，历史结果不再适合作为机审种子。',
+      '政策边界发生变化，建议移除种子结果。',
     ],
     suggest_keep: [
-      '该素材仍符合收严后的风险定义，建议保留种子结果继续复用。',
-      '风险等级升高，需要继续监控该素材。',
-      '命中新政策违规项，建议保留种子结果。',
+      '模型确认该内容仍具备复用价值，建议保留。',
+      '风险特征稳定命中，建议继续作为机审种子。',
+      '策略收严后仍符合风险定义，建议保留结果。',
     ],
   };
 
@@ -123,26 +159,37 @@ function generateMockModelResult() {
   };
 }
 
+function getSeedMetricValue(seed: Seed, metric: CcrMetricType): number | undefined {
+  if (metric === 'p0_ccr') return seed.adLevel === 'P0' ? seed.ccr : undefined;
+  if (metric === 'p1_ccr') return seed.adLevel === 'P1' ? seed.ccr : undefined;
+  return seed.secondaryCCRs.find((item) => item.type === metric)?.value;
+}
+
 function App() {
   const [seeds, setSeeds] = useState<Seed[]>(initialSeeds);
-  const [tasks, setTasks] = useState<Task[]>(mockTasks);
-  const [currentNav, setCurrentNav] = useState<NavKey>('taskCenter');
+  const [tasks, setTasks] = useState<Task[]>(
+    mockTasks.map((task) => ({
+      ...task,
+      status: normalizeTaskStatus(task.status),
+      seedIds: task.seedIds || initialSeeds.slice(0, Math.min(task.seedCount, 80)).map((seed) => seed.id),
+    })),
+  );
+  const [currentNav, setCurrentNav] = useState<NavKey>('createTask');
   const [sceneType, setSceneType] = useState<SceneType>('relax');
   const [taskName, setTaskName] = useState('');
   const [taskRemark, setTaskRemark] = useState('');
   const [filterConditions, setFilterConditions] = useState<FilterCondition>({});
-  const [generatedBatchSeeds, setGeneratedBatchSeeds] = useState<Seed[]>([]);
-  const [isBatchGenerated, setIsBatchGenerated] = useState(false);
+  const [createdTaskId, setCreatedTaskId] = useState('');
+  const [previewSeeds, setPreviewSeeds] = useState<Seed[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [selectedTaskRowKeys, setSelectedTaskRowKeys] = useState<string[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showTaskDetail, setShowTaskDetail] = useState(false);
   const [detailSeed, setDetailSeed] = useState<Seed | null>(null);
   const [showSeedDetail, setShowSeedDetail] = useState(false);
-  const [showBatchApprovalModal, setShowBatchApprovalModal] = useState(false);
-  const [batchApprovalReason, setBatchApprovalReason] = useState('');
-  const [currentBatchApproval, setCurrentBatchApproval] = useState<BatchApproval | null>(null);
-  const [selectedExecuteTaskId, setSelectedExecuteTaskId] = useState('');
+  const [executionDrawerOpen, setExecutionDrawerOpen] = useState(false);
+  const [executionTaskIds, setExecutionTaskIds] = useState<string[]>([]);
   const [executionConfig, setExecutionConfig] = useState<ExecutionConfig>({
     capability: null,
     tagId: '',
@@ -150,9 +197,14 @@ function App() {
     onlySelected: false,
     batchName: '',
   });
-  const [showDisposalModal, setShowDisposalModal] = useState(false);
-  const [currentDisposalTask, setCurrentDisposalTask] = useState<Task | null>(null);
-  const [disposalReason, setDisposalReason] = useState('');
+  const [taskFilters, setTaskFilters] = useState<TaskFilters>({});
+  const [appliedTaskFilters, setAppliedTaskFilters] = useState<TaskFilters>({});
+
+  function normalizeTaskStatus(status: TaskStatus): TaskStatus {
+    if (status === 'draft' || status === 'pending_approval') return 'pending_model';
+    if (status === 'disposal_pending') return 'approval_approved';
+    return status;
+  }
 
   const filteredSeeds = useMemo(() => {
     let result = [...seeds];
@@ -169,115 +221,112 @@ function App() {
     if (filterConditions.seedType?.length) {
       result = result.filter((seed) => filterConditions.seedType?.includes(seed.seedType));
     }
-    if (filterConditions.materialId?.length) {
-      result = result.filter((seed) => filterConditions.materialId?.includes(seed.materialId || ''));
-    }
-    if (filterConditions.creativeId?.length) {
-      result = result.filter((seed) => filterConditions.creativeId?.includes(seed.creativeId || ''));
-    }
     if (filterConditions.country?.length) {
       result = result.filter((seed) => filterConditions.country?.includes(seed.country));
     }
     if (filterConditions.industry?.length) {
       result = result.filter((seed) => filterConditions.industry?.includes(seed.industry));
     }
-    if (filterConditions.auditSource?.length) {
-      result = result.filter((seed) => filterConditions.auditSource?.includes(seed.auditSource));
-    }
-    if (filterConditions.policyCode?.length) {
-      result = result.filter((seed) => filterConditions.policyCode?.includes(seed.policyCode));
-    }
-    if (filterConditions.provision?.length) {
-      result = result.filter((seed) => filterConditions.provision?.includes(seed.provision));
-    }
-    if (filterConditions.deliveryStatus?.length) {
-      result = result.filter((seed) => filterConditions.deliveryStatus?.includes(seed.deliveryStatus));
-    }
     if (filterConditions.seedStatus?.length) {
       result = result.filter((seed) => filterConditions.seedStatus?.includes(seed.seedStatus));
     }
-    if (filterConditions.executionStatus?.length) {
-      result = result.filter((seed) => filterConditions.executionStatus?.includes(seed.executionStatus));
+    if (filterConditions.auditSource?.length) {
+      result = result.filter((seed) => filterConditions.auditSource?.includes(seed.auditSource));
     }
-    if (filterConditions.modelConclusion?.length) {
-      result = result.filter((seed) => filterConditions.modelConclusion?.includes(seed.modelResult?.conclusion || 'no_result'));
+    if (sceneType === 'relax') {
+      if (filterConditions.policyCode?.length) {
+        result = result.filter((seed) => filterConditions.policyCode?.includes(seed.policyCode));
+      }
+      if (filterConditions.provision?.length) {
+        result = result.filter((seed) => filterConditions.provision?.includes(seed.provision));
+      }
     }
-    if (filterConditions.p0CCRArea?.length) {
-      result = result.filter((seed) => {
-        if (seed.adLevel !== 'P0') return false;
-        return filterConditions.p0CCRArea?.some((area) => (area === 'above_market' ? seed.ccr >= 0.5 : seed.ccr < 0.5));
+    if (sceneType === 'tighten' && filterConditions.ccrRanges) {
+      const ccrEntries = Object.entries(filterConditions.ccrRanges) as Array<[CcrMetricType, CcrRange]>;
+      ccrEntries.forEach(([metric, range]) => {
+        if (range?.gte === undefined && range?.lte === undefined) return;
+        result = result.filter((seed) => {
+          const value = getSeedMetricValue(seed, metric);
+          if (value === undefined) return false;
+          if (range.gte !== undefined && value < range.gte) return false;
+          if (range.lte !== undefined && value > range.lte) return false;
+          return true;
+        });
       });
     }
-    if (filterConditions.p1CCRArea?.length) {
-      result = result.filter((seed) => {
-        if (seed.adLevel !== 'P1') return false;
-        return filterConditions.p1CCRArea?.some((area) => (area === 'above_market' ? seed.ccr >= 0.5 : seed.ccr < 0.5));
-      });
-    }
-    if (filterConditions.secondaryCCR?.length) {
-      result = result.filter((seed) =>
-        seed.secondaryCCRs.some((ccr) => filterConditions.secondaryCCR?.includes(ccr.type)),
-      );
-    }
-
     return result;
-  }, [seeds, filterConditions]);
+  }, [filterConditions, sceneType, seeds]);
 
-  const visibleSeeds = isBatchGenerated ? generatedBatchSeeds : [];
-  const paginatedSeeds = visibleSeeds.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paginatedPreviewSeeds = previewSeeds.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  const taskStats = useMemo(() => {
-    return {
-      total: tasks.length,
-      pending: tasks.filter((task) => task.batchApproval?.status === 'pending_review').length,
-      approved: tasks.filter((task) => task.batchApproval?.status === 'approved').length,
-      completed: tasks.filter((task) => task.status === 'disposal_completed').length,
-    };
-  }, [tasks]);
+  const taskStats = useMemo(() => ({
+    total: tasks.length,
+    pendingModel: tasks.filter((task) => task.status === 'pending_model').length,
+    running: tasks.filter((task) => task.status === 'model_executing').length,
+    pendingApproval: tasks.filter((task) => task.status === 'model_completed').length,
+    pendingClean: tasks.filter((task) => task.status === 'approval_approved').length,
+  }), [tasks]);
 
-  const availableTags = executionConfig.capability === 'hermes'
-    ? hermesTags.filter((item) => item.scene === sceneType || item.scene === 'both')
-    : workflowTags.filter((item) => item.scene === sceneType || item.scene === 'both');
+  const taskRows = useMemo(() => {
+    return [...tasks]
+      .filter((task) => {
+        if (appliedTaskFilters.sceneType && task.sceneType !== appliedTaskFilters.sceneType) return false;
+        if (appliedTaskFilters.taskId && !task.id.includes(appliedTaskFilters.taskId.trim())) return false;
+        if (appliedTaskFilters.market?.length) {
+          const markets = (task.filterConditions.country || []) as string[];
+          if (!markets.some((market: string) => appliedTaskFilters.market?.includes(market))) return false;
+        }
+        if (appliedTaskFilters.objectType?.length) {
+          const objectTypes = (task.filterConditions.objectType || []) as string[];
+          if (!objectTypes.some((type: string) => appliedTaskFilters.objectType?.includes(type))) return false;
+        }
+        if (appliedTaskFilters.createdStart && task.createdAt < appliedTaskFilters.createdStart) return false;
+        if (appliedTaskFilters.createdEnd && task.createdAt > `${appliedTaskFilters.createdEnd} 23:59:59`) return false;
+        return true;
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [appliedTaskFilters, tasks]);
 
-  const getTaskNameExample = () => {
-    const sceneLabel = sceneType === 'relax' ? '政策放宽' : '政策收严';
-    const market = filterConditions.country?.[0] || 'US';
-    const dateLabel = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    return `${sceneLabel}-${dateLabel}-${market}-种子处理`;
-  };
+  const detailTaskSeeds = useMemo(() => {
+    if (!selectedTask) return [];
+    return seeds.filter((seed) => selectedTask.seedIds?.includes(seed.id));
+  }, [seeds, selectedTask]);
 
-  const validateTaskMeta = () => {
-    const sceneKeyword = sceneType === 'relax' ? '放宽' : '收严';
-    const hasScene = taskName.includes(sceneKeyword) || taskName.includes(sceneType === 'relax' ? '政策放宽' : '政策收严');
-    const hasDate = /\d{4}[-/]?\d{2}[-/]?\d{2}|\d{8}/.test(taskName);
-    const selectedMarkets = filterConditions.country || [];
-    const hasMarket = selectedMarkets.length === 0
-      || selectedMarkets.some((country) => taskName.includes(country) || taskName.includes(countryLabels[country]));
+  const executionTasks = useMemo(
+    () => tasks.filter((task) => executionTaskIds.includes(task.id)),
+    [executionTaskIds, tasks],
+  );
 
-    if (!taskName.trim()) {
-      message.warning('请填写任务名称');
-      return false;
-    }
-    if (!taskRemark.trim()) {
-      message.warning('请填写任务备注');
-      return false;
-    }
-    if (!hasScene || !hasDate || !hasMarket) {
-      message.warning(`任务名称需包含场景、日期和市场，例如：${getTaskNameExample()}`);
-      return false;
-    }
-    return true;
-  };
+  const executionSceneType = useMemo<SceneType | undefined>(() => {
+    const scenes = Array.from(new Set(executionTasks.map((task) => task.sceneType)));
+    return scenes.length === 1 ? scenes[0] : undefined;
+  }, [executionTasks]);
 
-  const resetGeneration = () => {
-    setIsBatchGenerated(false);
-    setGeneratedBatchSeeds([]);
+  const availableTags = executionConfig.capability === 'workflow'
+    ? (workflowTags as TagOption[]).filter((item: TagOption) => item.scene === 'both' || item.scene === executionSceneType)
+    : (hermesTags as TagOption[]).filter((item: TagOption) => item.scene === 'both' || item.scene === executionSceneType);
+
+  const updateFilter = <K extends keyof FilterCondition>(key: K, value: FilterCondition[K]) => {
+    setFilterConditions((prev: FilterCondition) => ({ ...prev, [key]: value }));
+    setCreatedTaskId('');
+    setPreviewSeeds([]);
     setCurrentPage(1);
   };
 
-  const updateFilter = <K extends keyof FilterCondition>(key: K, value: FilterCondition[K]) => {
-    setFilterConditions((prev) => ({ ...prev, [key]: value }));
-    resetGeneration();
+  const updateCcrRange = (metric: CcrMetricType, operator: CcrOperator, rawValue: string) => {
+    const parsed = rawValue === '' ? undefined : Number(rawValue);
+    setFilterConditions((prev: FilterCondition) => ({
+      ...prev,
+      ccrRanges: {
+        ...prev.ccrRanges,
+        [metric]: {
+          ...prev.ccrRanges?.[metric],
+          [operator]: Number.isFinite(parsed) ? parsed : undefined,
+        },
+      },
+    }));
+    setCreatedTaskId('');
+    setPreviewSeeds([]);
   };
 
   const handleSceneChange = (value: SceneType) => {
@@ -285,8 +334,8 @@ function App() {
     setFilterConditions({});
     setTaskName('');
     setTaskRemark('');
-    setSelectedExecuteTaskId('');
-    resetGeneration();
+    setCreatedTaskId('');
+    setPreviewSeeds([]);
   };
 
   const handleObjectIdUpload = (file: File) => {
@@ -295,7 +344,6 @@ function App() {
       message.warning('当前 Demo 环境未接入 Excel 解析库，请先将文件另存为 CSV/TXT 后上传。');
       return false;
     }
-
     const reader = new FileReader();
     reader.onload = () => {
       const objectIds = parseObjectIdsFromText(String(reader.result || ''));
@@ -307,161 +355,120 @@ function App() {
     return false;
   };
 
-  const handleResetFilter = () => {
-    setFilterConditions({});
-    setTaskName('');
-    setTaskRemark('');
-    resetGeneration();
+  const getTaskNameExample = () => {
+    const sceneLabel = sceneType === 'relax' ? '政策放宽' : '政策收严';
+    const market = filterConditions.country?.[0] || 'US';
+    const dateLabel = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return `${sceneLabel}-${dateLabel}-${market}-种子筛选`;
   };
 
-  const handleSaveFilter = () => {
-    message.success('筛选条件已暂存');
+  const validateTaskMeta = () => {
+    if (!taskName.trim()) {
+      message.warning('请填写任务名称');
+      return false;
+    }
+    if (!taskRemark.trim()) {
+      message.warning('请填写任务备注');
+      return false;
+    }
+    return true;
   };
 
-  const handleGenerateBatch = () => {
+  const getTaskSubmitter = (task: Task) => task.submitter || defaultSubmitter;
+
+  const isTaskFilterApplied = Object.values(appliedTaskFilters).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value));
+
+  const handleSearchTasks = () => {
+    setAppliedTaskFilters({ ...taskFilters });
+    setSelectedTaskRowKeys([]);
+  };
+
+  const handleResetTaskFilters = () => {
+    setTaskFilters({});
+    setAppliedTaskFilters({});
+    setSelectedTaskRowKeys([]);
+  };
+
+  const handleCreateSeedTask = () => {
     if (!validateTaskMeta()) return;
-    const activeSeeds = filteredSeeds.filter((seed) => seed.seedStatus === 'active');
-    if (activeSeeds.length === 0) {
-      message.warning('当前条件下没有可处理的生效中种子');
+    const taskSeeds = filteredSeeds;
+    if (taskSeeds.length === 0) {
+      message.warning('当前条件下没有可生成任务的种子');
       return;
     }
-    setGeneratedBatchSeeds(activeSeeds);
-    setIsBatchGenerated(true);
-    setCurrentPage(1);
-    message.success(`已生成筛选结果，共 ${activeSeeds.length} 条生效中种子`);
-  };
-
-  const handleSubmitBatchApproval = () => {
-    if (!isBatchGenerated || generatedBatchSeeds.length === 0) {
-      message.warning('请先生成筛选结果');
-      return;
-    }
-    if (!validateTaskMeta()) return;
-
-    setCurrentBatchApproval({
-      id: generateId('batch_approval'),
-      sceneType,
-      seedCount: generatedBatchSeeds.length,
-      seedIds: generatedBatchSeeds.map((seed) => seed.id),
-      taskName: taskName.trim(),
-      taskRemark: taskRemark.trim(),
-      filterConditions: { ...filterConditions },
-      status: 'unsubmitted',
-      reason: '',
-      createdAt: formatDate(new Date()),
-    });
-    setBatchApprovalReason('');
-    setShowBatchApprovalModal(true);
-  };
-
-  const handleConfirmBatchApproval = () => {
-    if (!currentBatchApproval || !batchApprovalReason.trim()) {
-      message.warning('请填写量级审批原因');
-      return;
-    }
-
-    const nextApproval: BatchApproval = {
-      ...currentBatchApproval,
-      status: 'pending_review',
-      reason: batchApprovalReason.trim(),
-    };
-
+    const now = formatDate(new Date());
     const nextTask: Task = {
       id: generateId('task'),
-      name: currentBatchApproval.taskName || taskName.trim(),
-      remark: currentBatchApproval.taskRemark || taskRemark.trim(),
+      name: taskName.trim(),
+      remark: taskRemark.trim(),
       sceneType,
-      status: 'pending_approval',
-      seedCount: currentBatchApproval.seedCount,
-      seedIds: currentBatchApproval.seedIds,
+      status: 'pending_model',
+      seedCount: taskSeeds.length,
+      seedIds: taskSeeds.map((seed) => seed.id),
+      submitter: '当前用户',
       filterConditions: { ...filterConditions },
-      createdAt: formatDate(new Date()),
-      updatedAt: formatDate(new Date()),
-      batchApproval: nextApproval,
+      createdAt: now,
+      updatedAt: now,
     };
-
     setTasks((prev) => [nextTask, ...prev]);
-    setShowBatchApprovalModal(false);
-    setCurrentBatchApproval(null);
-    message.success('任务已发起，等待量级审批');
+    setPreviewSeeds(taskSeeds);
+    setCreatedTaskId(nextTask.id);
+    setCurrentPage(1);
+    message.success(`已生成种子筛选任务：${nextTask.id}`);
   };
 
-  const handleApproveBatch = (approvalId: string) => {
-    setTasks((prev) =>
-      prev.map((task) => {
-        if (task.batchApproval?.id !== approvalId) return task;
-        return {
-          ...task,
-          updatedAt: formatDate(new Date()),
-          batchApproval: {
-            ...task.batchApproval,
-            status: 'approved',
-            approvedBy: '运营 Leader',
-            approvedAt: formatDate(new Date()),
-          },
-        };
-      }),
-    );
-    message.success('量级审批已通过');
-  };
-
-  const handleRejectBatch = (approvalId: string) => {
-    setTasks((prev) =>
-      prev.map((task) => {
-        if (task.batchApproval?.id !== approvalId) return task;
-        return {
-          ...task,
-          status: 'abandoned',
-          updatedAt: formatDate(new Date()),
-          batchApproval: {
-            ...task.batchApproval,
-            status: 'rejected',
-            approvedBy: '运营 Leader',
-            approvedAt: formatDate(new Date()),
-            rejectReason: '审批未通过',
-          },
-        };
-      }),
-    );
-    message.success('任务已拒绝');
-  };
-
-  const handleExecuteTaskModel = () => {
-    const task = tasks.find((item) => item.id === selectedExecuteTaskId);
-    if (!task) {
-      message.warning('请先选择要执行模型的任务');
+  const openExecutionDrawer = (taskIds: string[]) => {
+    const executableIds = taskIds.filter((id) => tasks.find((task) => task.id === id)?.status === 'pending_model');
+    if (executableIds.length === 0) {
+      message.warning('请选择处于“待执行模型”的任务');
       return;
     }
-    if (task.batchApproval?.status !== 'approved') {
-      message.warning('该任务尚未通过量级审批');
-      return;
-    }
+    setExecutionTaskIds(executableIds);
+    setExecutionConfig({ capability: null, tagId: '', description: '', onlySelected: false, batchName: '' });
+    setExecutionDrawerOpen(true);
+  };
+
+  const handleRunModel = () => {
     if (!executionConfig.capability || !executionConfig.tagId) {
-      message.warning('请先选择执行能力和 Tag');
+      message.warning('请先选择执行能力和 Tag ID');
       return;
     }
+    const targetTasks = executionTasks;
+    if (targetTasks.length === 0) return;
 
-    const targetSeedIds = task.seedIds || [];
-    const modelResults = new Map<string, Seed['modelResult']>();
-    let suggestClear = 0;
-    let suggestKeep = 0;
-    targetSeedIds.forEach((seedId) => {
-      const result = generateMockModelResult();
-      modelResults.set(seedId, result);
-      if (result.conclusion === 'suggest_clear') suggestClear += 1;
-      if (result.conclusion === 'suggest_keep') suggestKeep += 1;
-    });
+    const now = formatDate(new Date());
+    setTasks((prev) => prev.map((task) => (
+      executionTaskIds.includes(task.id)
+        ? { ...task, status: 'model_executing', executionConfig: { ...executionConfig, batchName: task.name }, updatedAt: now }
+        : task
+    )));
+    setExecutionDrawerOpen(false);
+    message.success('模型执行已提交，Demo 将自动模拟返回结果');
 
-    setSeeds((prev) =>
-      prev.map((seed) => {
-        const modelResult = modelResults.get(seed.id);
+    window.setTimeout(() => {
+      const nextStats = new Map<string, { suggestClear: number; suggestKeep: number }>();
+      const resultBySeedId = new Map<string, ReturnType<typeof generateMockModelResult>>();
+      targetTasks.forEach((task) => {
+        let suggestClear = 0;
+        let suggestKeep = 0;
+        task.seedIds?.forEach((seedId: string) => {
+          const result = generateMockModelResult();
+          resultBySeedId.set(seedId, result);
+          if (result.conclusion === 'suggest_clear') suggestClear += 1;
+          if (result.conclusion === 'suggest_keep') suggestKeep += 1;
+        });
+        nextStats.set(task.id, { suggestClear, suggestKeep });
+      });
+
+      setSeeds((prev: Seed[]) => prev.map((seed: Seed) => {
+        const modelResult = resultBySeedId.get(seed.id);
         if (!modelResult) return seed;
         const newLog: OperationLog = {
           id: generateId('log'),
           time: formatDate(new Date()),
-          action: '任务批次模型执行',
+          action: '任务中心执行模型',
           operator: 'operator',
-          detail: `${task.name} / ${capabilityLabels[executionConfig.capability!]} - ${executionConfig.tagId}`,
+          detail: `${capabilityLabels[executionConfig.capability!]} - ${executionConfig.tagId}`,
         };
         return {
           ...seed,
@@ -472,137 +479,61 @@ function App() {
           updatedAt: formatDate(new Date()),
           operationLogs: [...seed.operationLogs, newLog],
         };
-      }),
-    );
+      }));
 
-    setTasks((prev) =>
-      prev.map((item) => {
-        if (item.id !== task.id) return item;
-        return {
-          ...item,
-          status: 'model_completed',
-          updatedAt: formatDate(new Date()),
-          executionConfig: { ...executionConfig, batchName: item.name },
-          modelResultStats: {
-            suggestClear,
-            suggestKeep,
-          },
-        };
-      }),
-    );
-    setExecutionConfig((prev) => ({ ...prev, description: '', onlySelected: false }));
-    message.success('模型执行完成');
-  };
-
-  const openDisposalModal = (task: Task) => {
-    setCurrentDisposalTask(task);
-    setDisposalReason('');
-    setShowDisposalModal(true);
-  };
-
-  const handleSubmitDisposalApproval = () => {
-    if (!currentDisposalTask || !disposalReason.trim()) {
-      message.warning('请填写处置审批原因');
-      return;
-    }
-
-    const targetSeeds = seeds.filter((seed) => currentDisposalTask.seedIds?.includes(seed.id));
-    const clearSuggestedCount = targetSeeds.filter((seed) => seed.modelResult?.conclusion === 'suggest_clear').length;
-    const keepSuggestedCount = targetSeeds.filter((seed) => seed.modelResult?.conclusion === 'suggest_keep').length;
-
-    const approval: ApprovalRequest = {
-      id: generateId('approval'),
-      batchId: currentDisposalTask.id,
-      seedIds: currentDisposalTask.seedIds || [],
-      reason: disposalReason.trim(),
-      sceneType: currentDisposalTask.sceneType,
-      totalCount: targetSeeds.length,
-      clearSuggestedCount,
-      keepSuggestedCount,
-      status: 'pending',
-      feishuApprovalUrl: 'https://bytedance.larkoffice.com',
-      createdAt: formatDate(new Date()),
-    };
-
-    setTasks((prev) =>
-      prev.map((task) => {
-        if (task.id !== currentDisposalTask.id) return task;
+      setTasks((prev: Task[]) => prev.map((task: Task) => {
+        const stats = nextStats.get(task.id);
+        if (!stats) return task;
         return {
           ...task,
-          status: 'disposal_pending',
+          status: 'model_completed',
           updatedAt: formatDate(new Date()),
-          disposalApproval: approval,
+          modelResultStats: stats,
         };
-      }),
-    );
-    setShowDisposalModal(false);
-    message.success('已提交处置审批');
+      }));
+      message.success('模型执行完毕，任务进入待审批确认');
+    }, 1200);
   };
 
-  const handleApproveDisposal = (taskId: string) => {
-    const task = tasks.find((item) => item.id === taskId);
-    if (!task?.disposalApproval) return;
+  const updateTaskStatus = (taskIds: string[], status: TaskStatus, successText: string) => {
+    const updatedAt = formatDate(new Date());
+    setTasks((prev: Task[]) => prev.map((task: Task) => (
+      taskIds.includes(task.id)
+        ? { ...task, status, updatedAt }
+        : task
+    )));
+    setSelectedTask((prev: Task | null) => (prev && taskIds.includes(prev.id) ? { ...prev, status, updatedAt } : prev));
+    setSelectedTaskRowKeys([]);
+    message.success(successText);
+  };
 
-    const shouldDispose = (conclusion?: ModelConclusion) => {
-      if (task.sceneType === 'relax') return conclusion === 'suggest_clear';
-      return conclusion === 'suggest_keep';
-    };
-
-    setSeeds((prev) =>
-      prev.map((seed) => {
-        if (!task.seedIds?.includes(seed.id) || !shouldDispose(seed.modelResult?.conclusion)) return seed;
-        const newLog: OperationLog = {
-          id: generateId('log'),
-          time: formatDate(new Date()),
-          action: '审批通过后自动处置',
-          operator: 'system',
-          detail: task.sceneType === 'relax' ? '模型建议清除，移除种子结果' : '模型建议保留，收严场景下剔除种子结果',
-        };
-        return {
-          ...seed,
-          seedStatus: 'cleared',
-          clearedAt: formatDate(new Date()),
-          updatedAt: formatDate(new Date()),
-          operationLogs: [...seed.operationLogs, newLog],
-        };
-      }),
-    );
-
-    setTasks((prev) =>
-      prev.map((item) => {
-        if (item.id !== taskId || !item.disposalApproval) return item;
-        return {
-          ...item,
-          status: 'disposal_completed',
-          updatedAt: formatDate(new Date()),
-          disposalApproval: {
-            ...item.disposalApproval,
-            status: 'approved',
-            approvedBy: '运营 Leader',
-            approvedAt: formatDate(new Date()),
+  const handleCleanTasks = (taskIds: string[]) => {
+    const targetTasks = tasks.filter((task) => taskIds.includes(task.id) && task.status === 'approval_approved');
+    if (targetTasks.length === 0) {
+      message.warning('请选择处于“审批通过，待清理”的任务');
+      return;
+    }
+    const targetSeedIds = new Set(targetTasks.flatMap((task) => task.seedIds || []));
+    setSeeds((prev) => prev.map((seed) => {
+      if (!targetSeedIds.has(seed.id)) return seed;
+      return {
+        ...seed,
+        seedStatus: 'cleared',
+        clearedAt: formatDate(new Date()),
+        updatedAt: formatDate(new Date()),
+        operationLogs: [
+          ...seed.operationLogs,
+          {
+            id: generateId('log'),
+            time: formatDate(new Date()),
+            action: '审批通过后清理种子',
+            operator: 'system',
+            detail: '任务中心触发自动清理',
           },
-        };
-      }),
-    );
-    message.success('处置审批已通过，并已自动处置对应种子');
-  };
-
-  const handleTableChange: TableProps<Seed>['onChange'] = (pagination) => {
-    setCurrentPage(pagination.current || 1);
-    setPageSize(pagination.pageSize || 10);
-  };
-
-  const renderTaskStatus = (status: TaskStatus) => {
-    const colorMap: Record<TaskStatus, string> = {
-      draft: 'default',
-      pending_approval: 'orange',
-      model_executing: 'blue',
-      model_completed: 'purple',
-      disposal_pending: 'gold',
-      disposal_completed: 'green',
-      abandoned: 'default',
-    };
-    return <Tag color={colorMap[status]}>{taskStatusLabels[status]}</Tag>;
+        ],
+      };
+    }));
+    updateTaskStatus(targetTasks.map((task) => task.id), 'disposal_completed', '已完成清理');
   };
 
   const renderScene = (scene: SceneType) => (
@@ -611,557 +542,376 @@ function App() {
     </Tag>
   );
 
-  const renderExecutionStatus = (status: Seed['executionStatus']) => {
-    if (status === 'success') return <Badge status="success" text="执行成功" />;
-    if (status === 'failed') return <Badge status="error" text="执行失败" />;
-    if (status === 'executing') return <Badge status="processing" text="执行中" />;
-    return <Badge status="default" text="未执行" />;
-  };
+  const renderTaskStatus = (status: TaskStatus) => (
+    <Tag color={statusColorMap[status] || 'default'}>{taskStatusLabels[status]}</Tag>
+  );
 
   const renderModelConclusion = (conclusion?: ModelConclusion) => {
     if (!conclusion) return '-';
-    const className =
-      conclusion === 'suggest_clear'
-        ? 'tag-suggest-clear'
-        : conclusion === 'suggest_keep'
-          ? 'tag-suggest-keep'
-          : 'tag-no-result';
+    const className = conclusion === 'suggest_clear' ? 'tag-suggest-clear' : conclusion === 'suggest_keep' ? 'tag-suggest-keep' : 'tag-no-result';
     return <Tag className={className}>{modelConclusionLabels[conclusion]}</Tag>;
   };
 
+  const renderSeedPreview = (seed: Seed) => {
+    if (seed.objectType === 'image') {
+      const prompt = encodeURIComponent(`realistic ad creative preview for ${seed.industry} market ${seed.country}, clean product image, website thumbnail`);
+      return (
+        <div className="preview-card">
+          <img
+            src={`https://copilot-cn.bytedance.net/api/ide/v1/text_to_image?prompt=${prompt}&image_size=landscape_4_3`}
+            alt="图片预览"
+            className="preview-image"
+          />
+        </div>
+      );
+    }
+    if (seed.objectType === 'video') return <div className="preview-card"><div className="preview-video">Video<br />00:15</div></div>;
+    if (seed.objectType === 'text') return <div className="preview-card"><div className="preview-text">高转化广告文案示例：限时优惠，立即了解更多。</div></div>;
+    return <div className="preview-card"><div className="preview-landing">{`https://ads.example.com/${seed.objectId}`}</div></div>;
+  };
+
+  const openSeedDetail = (seed: Seed) => {
+    setDetailSeed(seed);
+    setShowSeedDetail(true);
+  };
+
   const seedColumns: TableProps<Seed>['columns'] = [
+    { title: '预览', key: 'preview', width: 110, render: (_, record) => renderSeedPreview(record) },
     { title: '种子 ID', dataIndex: 'id', key: 'id', width: 150 },
-    { title: 'Object ID', dataIndex: 'objectId', key: 'objectId', width: 160 },
-    {
-      title: '种子类型',
-      dataIndex: 'seedType',
-      key: 'seedType',
-      width: 100,
-      render: (value: Seed['seedType']) => seedTypeLabels[value],
-    },
-    {
-      title: '国家/地区',
-      dataIndex: 'country',
-      key: 'country',
-      width: 110,
-      render: (value: Seed['country']) => countryLabels[value],
-    },
-    {
-      title: '行业',
-      dataIndex: 'industry',
-      key: 'industry',
-      width: 110,
-      render: (value: Seed['industry']) => industryLabels[value],
-    },
-    {
-      title: '审核来源',
-      dataIndex: 'auditSource',
-      key: 'auditSource',
-      width: 110,
-      render: (value: Seed['auditSource']) => auditSourceLabels[value],
-    },
-    { title: 'Policy', dataIndex: 'policyCode', key: 'policyCode', width: 120 },
-    { title: 'Provision', dataIndex: 'provision', key: 'provision', width: 100 },
-    {
-      title: '执行状态',
-      dataIndex: 'executionStatus',
-      key: 'executionStatus',
-      width: 120,
-      render: (value: Seed['executionStatus']) => renderExecutionStatus(value),
-    },
-    {
-      title: '模型结论',
-      dataIndex: 'modelResult',
-      key: 'modelResult',
-      width: 120,
-      render: (value: Seed['modelResult']) => renderModelConclusion(value?.conclusion),
-    },
+    { title: 'Object ID', dataIndex: 'objectId', key: 'objectId', width: 180 },
+    { title: 'Object Type', dataIndex: 'objectType', key: 'objectType', width: 120, render: (value: Seed['objectType']) => objectTypeLabels[value] },
+    { title: '市场', dataIndex: 'country', key: 'country', width: 100, render: (value: Seed['country']) => countryLabels[value] },
+    { title: '行业', dataIndex: 'industry', key: 'industry', width: 100, render: (value: Seed['industry']) => industryLabels[value] },
+    { title: '种子状态', dataIndex: 'seedStatus', key: 'seedStatus', width: 120, render: (value: Seed['seedStatus']) => seedStatusLabels[value] },
+    { title: '模型结论', dataIndex: 'modelResult', key: 'modelResult', width: 140, render: (value: Seed['modelResult']) => renderModelConclusion(value?.conclusion) },
     {
       title: '操作',
       key: 'action',
-      width: 100,
-      render: (_value, record) => (
-        <Button type="link" icon={<EyeOutlined />} onClick={() => { setDetailSeed(record); setShowSeedDetail(true); }}>
-          详情
-        </Button>
-      ),
+      width: 110,
+      fixed: 'right',
+      render: (_, record) => <Button type="link" icon={<EyeOutlined />} onClick={() => openSeedDetail(record)}>详情</Button>,
     },
   ];
 
   const taskFilterSummary = (task: Task) => {
     const parts: string[] = [];
-    if (task.filterConditions.country?.length) parts.push(`市场：${task.filterConditions.country.map((item) => countryLabels[item]).join(' / ')}`);
+    if (task.filterConditions.country?.length) parts.push(`市场：${(task.filterConditions.country as string[]).map((item: string) => countryLabels[item]).join(' / ')}`);
+    if (task.filterConditions.objectType?.length) parts.push(`Object Type：${(task.filterConditions.objectType as string[]).map((item: string) => objectTypeLabels[item]).join(' / ')}`);
+    if (task.filterConditions.auditSource?.length) parts.push(`审核来源：${(task.filterConditions.auditSource as string[]).map((item: string) => auditSourceLabels[item]).join(' / ')}`);
     if (task.filterConditions.policyCode?.length) parts.push(`Policy：${task.filterConditions.policyCode.join(' / ')}`);
     if (task.filterConditions.provision?.length) parts.push(`Provision：${task.filterConditions.provision.join(' / ')}`);
-    if (task.filterConditions.secondaryCCR?.length) parts.push(`CCR：${task.filterConditions.secondaryCCR.map((item) => secondaryCCRLabels[item]).join(' / ')}`);
-    if (task.filterConditions.auditSource?.length) parts.push(`审核来源：${task.filterConditions.auditSource.map((item) => auditSourceLabels[item]).join(' / ')}`);
+    if (task.filterConditions.ccrRanges) {
+      const ccrEntries = Object.entries(task.filterConditions.ccrRanges) as Array<[CcrMetricType, CcrRange]>;
+      const ccrParts = ccrEntries
+        .filter(([, range]) => range?.gte !== undefined || range?.lte !== undefined)
+        .map(([metric, range]) => `${ccrMetricLabels[metric]} ${range?.gte !== undefined ? `>=${range.gte}` : ''} ${range?.lte !== undefined ? `<=${range.lte}` : ''}`.trim());
+      if (ccrParts.length) parts.push(`CCR：${ccrParts.join(' / ')}`);
+    }
     return parts.length > 0 ? parts.join(' | ') : '未记录筛选摘要';
   };
 
-  const taskCenterContent = (
-    <>
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}><Card className="stat-card"><Statistic title="任务总数" value={taskStats.total} /></Card></Col>
-        <Col span={6}><Card className="stat-card"><Statistic title="审批中" value={taskStats.pending} /></Card></Col>
-        <Col span={6}><Card className="stat-card"><Statistic title="可执行任务" value={taskStats.approved} /></Card></Col>
-        <Col span={6}><Card className="stat-card"><Statistic title="已处置完成" value={taskStats.completed} /></Card></Col>
-      </Row>
-
-      <Card title="任务中心">
-        <Table
-          rowKey="id"
-          dataSource={tasks}
-          pagination={{ pageSize: 6 }}
-          columns={[
-            { title: '任务名称', dataIndex: 'name', key: 'name' },
-            {
-              title: '场景',
-              dataIndex: 'sceneType',
-              key: 'sceneType',
-              render: (value: SceneType) => renderScene(value),
-            },
-            { title: '种子数', dataIndex: 'seedCount', key: 'seedCount', width: 100 },
-            {
-              title: '状态',
-              dataIndex: 'status',
-              key: 'status',
-              width: 160,
-              render: (value: TaskStatus) => renderTaskStatus(value),
-            },
-            {
-              title: '审批状态',
-              key: 'approval',
-              width: 140,
-              render: (_, record: Task) => record.batchApproval
-                ? <Tag color={record.batchApproval.status === 'approved' ? 'green' : record.batchApproval.status === 'pending_review' ? 'gold' : 'default'}>{batchApprovalStatusLabels[record.batchApproval.status]}</Tag>
-                : <Tag>未提交</Tag>,
-            },
-            { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 180 },
-            {
-              title: '操作',
-              key: 'action',
-              width: 120,
-              render: (_, record: Task) => (
-                <Button type="link" onClick={() => { setSelectedTask(record); setShowTaskDetail(true); }}>
-                  查看详情
-                </Button>
-              ),
-            },
-          ]}
-        />
-      </Card>
-    </>
-  );
-
   const createTaskContent = (
-    <div>
-      <Card title="发起任务" className="scene-card" style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
-          <span style={{ marginRight: 16, fontWeight: 500, color: '#334155' }}>处理场景：</span>
-          <Segmented
-            value={sceneType}
-            onChange={(value) => handleSceneChange(value as SceneType)}
-            options={[
-              { label: '政策放宽', value: 'relax' },
-              { label: '政策收严', value: 'tighten' },
-            ]}
-          />
-        </div>
-        <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={12}>
-            <div style={{ marginBottom: 8, fontWeight: 600, color: '#1d1d1f' }}>任务名称</div>
-            <Input value={taskName} onChange={(e) => setTaskName(e.target.value)} placeholder={getTaskNameExample()} />
-          </Col>
-          <Col span={12}>
-            <div style={{ marginBottom: 8, fontWeight: 600, color: '#1d1d1f' }}>任务备注</div>
-            <Input.TextArea value={taskRemark} onChange={(e) => setTaskRemark(e.target.value)} rows={2} placeholder="说明本次任务背景、市场范围、审批原因" />
-          </Col>
-        </Row>
-        <Alert message={`命名格式要求：包含场景（放宽/收严）、日期、市场。示例：${getTaskNameExample()}`} type="info" showIcon style={{ marginBottom: 16 }} />
-        {sceneType === 'relax' ? (
+    <Space direction="vertical" size={24} style={{ width: '100%' }}>
+      <Card title="发起新任务" className="scene-card">
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontWeight: 600, color: '#1d1d1f' }}>处理场景</span>
+            <Segmented
+              value={sceneType}
+              onChange={(value) => handleSceneChange(value as SceneType)}
+              options={[
+                { label: '政策放宽', value: 'relax' },
+                { label: '政策收严', value: 'tighten' },
+              ]}
+            />
+          </div>
+          <Row gutter={16}>
+            <Col span={12}>
+              <label>任务名称</label>
+              <Input value={taskName} onChange={(event) => setTaskName(event.target.value)} placeholder={getTaskNameExample()} />
+              <div className="field-hint">建议格式：场景-YYYYMMDD-市场-任务目的，例如：政策收严-20260720-US-高CCR种子清理</div>
+            </Col>
+            <Col span={12}>
+              <label>任务备注</label>
+              <Input.TextArea value={taskRemark} onChange={(event) => setTaskRemark(event.target.value)} rows={2} placeholder="说明任务背景、目标市场和操作原因" />
+            </Col>
+          </Row>
           <Alert
-            type="success"
-            showIcon={false}
-            message={(
-              <>
-                <InfoCircleOutlined style={{ marginRight: 8 }} />
-                放宽场景下，可基于 policy / provision / 审核环节来源等条件圈定历史拒绝类种子。<br />
-                <strong>模型通过 → 移除种子结果 | 模型拒绝 → 继续保留</strong>
-              </>
-            )}
+            type={sceneType === 'relax' ? 'success' : 'warning'}
+            showIcon
+            message={sceneType === 'relax' ? '放宽场景：基于 Policy / Provision / 审核来源圈定可复核种子。' : '收严场景：基于 CCR 指标区间圈定高优先级种子。'}
           />
-        ) : (
-          <Alert
-            type="warning"
-            showIcon={false}
-            message={(
-              <>
-                <WarningOutlined style={{ marginRight: 8 }} />
-                收严场景下，优先基于 P0/P1 CCR、二级 CCR、国家和行业筛选高优先级种子。<br />
-                <strong>模型拒绝 → 剔除种子结果 | 模型通过 → 不动</strong>
-              </>
-            )}
-          />
-        )}
+        </Space>
       </Card>
 
-      <Collapse defaultActiveKey={['filters']}>
-        <Panel header="筛选条件" key="filters">
+      <Card title="筛选条件">
+        <Space direction="vertical" size={18} style={{ width: '100%' }}>
           <Row gutter={16}>
             <Col span={8}>
               <label>Object ID</label>
               <Input.TextArea
                 value={filterConditions.objectId}
-                onChange={(e) => updateFilter('objectId', e.target.value)}
+                onChange={(event) => updateFilter('objectId', event.target.value)}
                 rows={3}
-                placeholder="支持手动输入多个 Object ID，用逗号、空格或换行分隔"
+                placeholder="多个 Object ID 可用逗号、空格或换行分隔"
               />
               <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 8 }}>
                 <Upload accept=".csv,.txt,.xlsx,.xls" showUploadList={false} beforeUpload={handleObjectIdUpload}>
                   <Button>上传 Object ID 表格</Button>
                 </Upload>
-                <span style={{ color: '#86868b', fontSize: 12 }}>
-                  已导入 {filterConditions.objectIds?.length || 0} 个 Object ID
-                </span>
+                <span style={{ color: '#86868b', fontSize: 12 }}>已导入 {filterConditions.objectIds?.length || 0} 个 Object ID</span>
               </Space>
             </Col>
             <Col span={8}>
               <label>Object Type</label>
               <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.objectType} onChange={(value) => updateFilter('objectType', value)}>
-                {Object.entries(objectTypeLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+                  {(Object.entries(objectTypeLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
               </Select>
             </Col>
             <Col span={8}>
               <label>种子类型</label>
               <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.seedType} onChange={(value) => updateFilter('seedType', value)}>
-                {Object.entries(seedTypeLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+                  {(Object.entries(seedTypeLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
               </Select>
             </Col>
           </Row>
-          <Row gutter={16} style={{ marginTop: 16 }}>
-            <Col span={8}>
-              <label>国家/地区</label>
+          <Row gutter={16}>
+            <Col span={6}>
+              <label>市场</label>
               <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.country} onChange={(value) => updateFilter('country', value)}>
-                {Object.entries(countryLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+                  {(Object.entries(countryLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
               </Select>
             </Col>
-            <Col span={8}>
+            <Col span={6}>
               <label>行业</label>
               <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.industry} onChange={(value) => updateFilter('industry', value)}>
-                {Object.entries(industryLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+                {(Object.entries(industryLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
               </Select>
             </Col>
-            <Col span={8}>
-              <label>投放状态</label>
-              <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.deliveryStatus} onChange={(value) => updateFilter('deliveryStatus', value)}>
-                {Object.entries(deliveryStatusLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+            <Col span={6}>
+              <label>当前种子状态</label>
+              <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.seedStatus} onChange={(value) => updateFilter('seedStatus', value)}>
+                  {(Object.entries(seedStatusLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+              </Select>
+            </Col>
+            <Col span={6}>
+              <label>审核环节来源</label>
+              <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.auditSource} onChange={(value) => updateFilter('auditSource', value)}>
+                  {(Object.entries(auditSourceLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
               </Select>
             </Col>
           </Row>
 
           {sceneType === 'relax' && (
-            <>
-              <Row gutter={16} style={{ marginTop: 16 }}>
-                <Col span={8}>
-                  <label>审核环节来源</label>
-                  <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.auditSource} onChange={(value) => updateFilter('auditSource', value)}>
-                    {Object.entries(auditSourceLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
-                  </Select>
-                </Col>
-                <Col span={8}>
-                  <label>Policy Code</label>
-                  <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.policyCode} onChange={(value) => updateFilter('policyCode', value)}>
-                    {policyCodes.map((value) => <Select.Option key={value} value={value}>{value}</Select.Option>)}
-                  </Select>
-                </Col>
-                <Col span={8}>
-                  <label>Provision</label>
-                  <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.provision} onChange={(value) => updateFilter('provision', value)}>
-                    {provisions.map((value) => <Select.Option key={value} value={value}>{value}</Select.Option>)}
-                  </Select>
-                </Col>
-              </Row>
-              <Row gutter={16} style={{ marginTop: 16 }}>
-                <Col span={8}>
-                  <label>当前种子状态</label>
-                  <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.seedStatus} onChange={(value) => updateFilter('seedStatus', value)}>
-                    {Object.entries(seedStatusLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
-                  </Select>
-                </Col>
-              </Row>
-            </>
+            <Row gutter={16}>
+              <Col span={8}>
+                <label>Policy Code</label>
+                <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.policyCode} onChange={(value) => updateFilter('policyCode', value)}>
+                    {(policyCodes as string[]).map((value: string) => <Select.Option key={value} value={value}>{value}</Select.Option>)}
+                </Select>
+              </Col>
+              <Col span={8}>
+                <label>Provision</label>
+                <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.provision} onChange={(value) => updateFilter('provision', value)}>
+                    {(provisions as string[]).map((value: string) => <Select.Option key={value} value={value}>{value}</Select.Option>)}
+                </Select>
+              </Col>
+            </Row>
           )}
 
           {sceneType === 'tighten' && (
-            <>
-              <Row gutter={16} style={{ marginTop: 16 }}>
-                <Col span={8}>
-                  <label>P0 CCR 区间</label>
-                  <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.p0CCRArea} onChange={(value) => updateFilter('p0CCRArea', value as CCRArea[])}>
-                    {Object.entries(ccrAreaLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
-                  </Select>
-                </Col>
-                <Col span={8}>
-                  <label>P1 CCR 区间</label>
-                  <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.p1CCRArea} onChange={(value) => updateFilter('p1CCRArea', value as CCRArea[])}>
-                    {Object.entries(ccrAreaLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
-                  </Select>
-                </Col>
-                <Col span={8}>
-                  <label>二级 CCR</label>
-                  <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.secondaryCCR} onChange={(value) => updateFilter('secondaryCCR', value)}>
-                    {Object.entries(secondaryCCRLabels).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
-                  </Select>
-                </Col>
-              </Row>
-            </>
-          )}
-
-          <Row gutter={16} style={{ marginTop: 24 }}>
-            <Col span={24} style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <Button onClick={handleResetFilter}>重置条件</Button>
-              <Button onClick={handleSaveFilter}>保存条件</Button>
-              <Button type="primary" onClick={handleGenerateBatch}>生成筛选结果</Button>
-            </Col>
-          </Row>
-        </Panel>
-      </Collapse>
-
-      <Card style={{ marginTop: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-          {isBatchGenerated && (
             <div>
-              <span style={{ color: '#64748b' }}>筛选种子数量：</span>
-              <span style={{ fontWeight: 700, fontSize: 20, color: '#1d1d1f' }}>{visibleSeeds.length}</span>
+              <div style={{ fontWeight: 700, color: '#1d1d1f', marginBottom: 12 }}>CCR 区间</div>
+              <Row gutter={[12, 12]}>
+                {tightenCcrMetrics.map((metric) => (
+                  <Col span={8} key={metric}>
+                    <div className="ccr-range-card">
+                      <div className="ccr-range-title">{ccrMetricLabels[metric]}</div>
+                      <div className="ccr-range-inputs">
+                        <div className="ccr-range-input">
+                          <span>大于等于</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            placeholder="0.70"
+                            value={filterConditions.ccrRanges?.[metric]?.gte}
+                            onChange={(event) => updateCcrRange(metric, 'gte', event.target.value)}
+                          />
+                        </div>
+                        <div className="ccr-range-input">
+                          <span>小于等于</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            placeholder="0.95"
+                            value={filterConditions.ccrRanges?.[metric]?.lte}
+                            onChange={(event) => updateCcrRange(metric, 'lte', event.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Col>
+                ))}
+              </Row>
             </div>
           )}
-          {isBatchGenerated && visibleSeeds.length > 0 && (
-            <Button type="primary" onClick={handleSubmitBatchApproval}>
-              提交量级审批
-            </Button>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button onClick={() => { setFilterConditions({}); setPreviewSeeds([]); setCreatedTaskId(''); }}>重置条件</Button>
+            <Button type="primary" icon={<PlusCircleOutlined />} onClick={handleCreateSeedTask}>生成种子筛选任务</Button>
+          </div>
+        </Space>
+      </Card>
+
+      {createdTaskId && (
+        <Card>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Alert
+              type="success"
+              showIcon
+              message={`任务已创建：${createdTaskId}`}
+              description="任务发起不需要审批，已进入任务中心的“待执行模型”节点。"
+            />
+            <div>
+              <span style={{ color: '#64748b' }}>筛选种子数量：</span>
+              <span style={{ fontWeight: 800, fontSize: 24, color: '#1d1d1f' }}>{previewSeeds.length}</span>
+            </div>
+            <Table
+              rowKey="id"
+              dataSource={paginatedPreviewSeeds}
+              columns={seedColumns}
+              scroll={{ x: 1200 }}
+              pagination={{ current: currentPage, pageSize, total: previewSeeds.length, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
+              onChange={(pagination) => { setCurrentPage(pagination.current || 1); setPageSize(pagination.pageSize || 10); }}
+            />
+          </Space>
+        </Card>
+      )}
+    </Space>
+  );
+
+  const taskCenterContent = (
+    <Space direction="vertical" size={24} style={{ width: '100%' }}>
+      <Row gutter={16}>
+        <Col span={5}><Card className="stat-card"><Statistic title="任务总数" value={taskStats.total} /></Card></Col>
+        <Col span={5}><Card className="stat-card"><Statistic title="待执行模型" value={taskStats.pendingModel} /></Card></Col>
+        <Col span={5}><Card className="stat-card"><Statistic title="模型执行中" value={taskStats.running} /></Card></Col>
+        <Col span={5}><Card className="stat-card"><Statistic title="待审批确认" value={taskStats.pendingApproval} /></Card></Col>
+        <Col span={4}><Card className="stat-card"><Statistic title="待清理" value={taskStats.pendingClean} /></Card></Col>
+      </Row>
+
+      <Card title="查找任务">
+        <Row gutter={[16, 16]}>
+          <Col span={6}>
+            <label>场景</label>
+            <Select allowClear style={{ width: '100%' }} value={taskFilters.sceneType} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, sceneType: value as SceneType | undefined }))}>
+              <Select.Option value="relax">政策放宽</Select.Option>
+              <Select.Option value="tighten">政策收严</Select.Option>
+            </Select>
+          </Col>
+          <Col span={6}>
+            <label>任务 ID</label>
+            <Input value={taskFilters.taskId} onChange={(event) => setTaskFilters((prev: TaskFilters) => ({ ...prev, taskId: event.target.value }))} placeholder="输入 Task ID" />
+          </Col>
+          <Col span={6}>
+            <label>市场</label>
+            <Select mode="multiple" style={{ width: '100%' }} value={taskFilters.market} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, market: value as string[] }))}>
+              {(Object.entries(countryLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+            </Select>
+          </Col>
+          <Col span={6}>
+            <label>Object Type</label>
+            <Select mode="multiple" style={{ width: '100%' }} value={taskFilters.objectType} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, objectType: value as string[] }))}>
+              {(Object.entries(objectTypeLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+            </Select>
+          </Col>
+          <Col span={6}>
+            <label>创建时间开始</label>
+            <Input type="date" value={taskFilters.createdStart} onChange={(event) => setTaskFilters((prev: TaskFilters) => ({ ...prev, createdStart: event.target.value }))} />
+          </Col>
+            <Col span={6}>
+              <label>创建时间结束</label>
+              <Input type="date" value={taskFilters.createdEnd} onChange={(event) => setTaskFilters((prev: TaskFilters) => ({ ...prev, createdEnd: event.target.value }))} />
+            </Col>
+            <Col span={12} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', gap: 8 }}>
+              <Button type="primary" icon={<SearchOutlined />} onClick={handleSearchTasks}>搜索</Button>
+              <Button onClick={handleResetTaskFilters}>重置</Button>
+            </Col>
+          </Row>
+        </Card>
+
+        <Card
+          title={(
+            <Space>
+              <span>任务列表</span>
+              <Button icon={<PlayCircleOutlined />} onClick={() => openExecutionDrawer(selectedTaskRowKeys)}>批量执行模型</Button>
+              <Button icon={<DeleteOutlined />} onClick={() => handleCleanTasks(selectedTaskRowKeys)}>批量清理种子</Button>
+            </Space>
           )}
-        </div>
-        {!isBatchGenerated ? (
-          <Alert
-            type="info"
-            showIcon
-            message="生成筛选结果后展示种子数量和明细"
-            description="未发起任务前不展示种子数量和明细。确认任务名称、备注和筛选条件后点击“生成筛选结果”。"
-          />
-        ) : (
+        >
+          <div className="task-list-note">
+            {isTaskFilterApplied ? `已展示筛选后的任务列表，共 ${taskRows.length} 个任务。` : `未提交筛选条件，当前按创建时间倒排展示全部 ${taskRows.length} 个任务。`}
+          </div>
           <Table
             rowKey="id"
-            dataSource={paginatedSeeds}
-            columns={seedColumns}
-            scroll={{ x: 1400 }}
-            pagination={{
-              current: currentPage,
-              pageSize,
-              total: visibleSeeds.length,
-              showSizeChanger: true,
-              showTotal: (total) => `共 ${total} 条`,
-            }}
-            onChange={handleTableChange}
+            dataSource={taskRows}
+            rowSelection={{ selectedRowKeys: selectedTaskRowKeys, onChange: (keys) => setSelectedTaskRowKeys(keys.map(String)) }}
+            pagination={{ pageSize: 8, showTotal: (total) => `共 ${total} 个任务` }}
+            columns={[
+              {
+                title: '任务信息',
+                key: 'task',
+                render: (_, record: Task) => (
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#1d1d1f' }}>{record.name}</div>
+                    <div style={{ color: '#86868b', fontSize: 12, marginTop: 4 }}>{record.id}</div>
+                    <div style={{ color: '#6e6e73', fontSize: 12, marginTop: 4 }}>{taskFilterSummary(record)}</div>
+                  </div>
+                ),
+              },
+              { title: '场景', dataIndex: 'sceneType', key: 'sceneType', width: 120, render: (value: SceneType) => renderScene(value) },
+              { title: '种子数', dataIndex: 'seedCount', key: 'seedCount', width: 100 },
+              { title: '提交人', key: 'submitter', width: 110, render: (_, record: Task) => getTaskSubmitter(record) },
+              { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 170 },
+              { title: '流程节点', dataIndex: 'status', key: 'status', width: 190, render: (value: TaskStatus) => renderTaskStatus(value) },
+              {
+                title: '模型结果',
+                key: 'modelStats',
+                width: 190,
+                render: (_, record: Task) => record.modelResultStats
+                  ? <span>建议清除 {record.modelResultStats.suggestClear} / 建议保留 {record.modelResultStats.suggestKeep}</span>
+                  : <span style={{ color: '#86868b' }}>未执行</span>,
+              },
+              {
+                title: '操作',
+                key: 'action',
+                width: 260,
+                fixed: 'right',
+                render: (_, record: Task) => (
+                  <Space wrap>
+                    <Button size="small" onClick={() => { setSelectedTask(record); setShowTaskDetail(true); }}>详情</Button>
+                    {record.status === 'pending_model' && <Button size="small" type="primary" onClick={() => openExecutionDrawer([record.id])}>执行模型</Button>}
+                    {record.status === 'model_completed' && (
+                      <>
+                        <Button size="small" type="primary" icon={<CheckCircleOutlined />} onClick={() => updateTaskStatus([record.id], 'approval_approved', '审批已通过，任务进入待清理')}>
+                          审批通过
+                        </Button>
+                        <Button size="small" danger onClick={() => updateTaskStatus([record.id], 'approval_rejected', '审批已拒绝，任务终止')}>拒绝</Button>
+                      </>
+                    )}
+                    {record.status === 'approval_approved' && <Button size="small" type="primary" icon={<DeleteOutlined />} onClick={() => handleCleanTasks([record.id])}>清理</Button>}
+                  </Space>
+                ),
+              },
+            ]}
           />
-        )}
-      </Card>
-    </div>
-  );
-
-  const executeModelContent = (
-    <div>
-      <Card title="执行模型" style={{ marginBottom: 24 }}>
-        <Alert message="只有量级审批通过的任务才能执行模型" type="info" showIcon />
-      </Card>
-
-      <Table
-        rowKey="id"
-        dataSource={tasks}
-        pagination={{ pageSize: 6 }}
-        columns={[
-          { title: '任务名称', dataIndex: 'name', key: 'name' },
-          {
-            title: '场景',
-            dataIndex: 'sceneType',
-            key: 'sceneType',
-            render: (value: SceneType) => renderScene(value),
-          },
-          { title: '种子数量', dataIndex: 'seedCount', key: 'seedCount', width: 100 },
-          {
-            title: '任务状态',
-            dataIndex: 'status',
-            key: 'status',
-            render: (value: TaskStatus) => renderTaskStatus(value),
-          },
-          {
-            title: '审批状态',
-            key: 'approval',
-            render: (_, record: Task) =>
-              record.batchApproval
-                ? <Tag color={record.batchApproval.status === 'approved' ? 'green' : record.batchApproval.status === 'pending_review' ? 'gold' : 'default'}>{batchApprovalStatusLabels[record.batchApproval.status]}</Tag>
-                : <Tag>未提交</Tag>,
-          },
-          {
-            title: '操作',
-            key: 'action',
-            render: (_, record: Task) => (
-              <Space>
-                <Button size="small" onClick={() => { setSelectedTask(record); setShowTaskDetail(true); }}>查看</Button>
-                {record.batchApproval?.status === 'pending_review' && (
-                  <>
-                    <Button size="small" type="primary" onClick={() => handleApproveBatch(record.batchApproval?.id || '')}>审批通过</Button>
-                    <Button size="small" danger onClick={() => handleRejectBatch(record.batchApproval?.id || '')}>拒绝</Button>
-                  </>
-                )}
-                {record.batchApproval?.status === 'approved' && record.status !== 'disposal_completed' && (
-                  <Button size="small" type="primary" onClick={() => setSelectedExecuteTaskId(record.id)}>选择任务</Button>
-                )}
-              </Space>
-            ),
-          },
-        ]}
-      />
-
-      <Card title="执行配置" style={{ marginTop: 24 }}>
-        <Row gutter={16}>
-          <Col span={8}>
-            <label>选择任务</label>
-            <Select
-              showSearch
-              optionFilterProp="children"
-              style={{ width: '100%' }}
-              value={selectedExecuteTaskId || undefined}
-              onChange={setSelectedExecuteTaskId}
-              placeholder="请选择任务"
-            >
-              {tasks
-                .filter((task) => task.batchApproval?.status === 'approved' && task.status !== 'disposal_completed')
-                .map((task) => (
-                  <Select.Option key={task.id} value={task.id}>
-                    {task.name}（{task.seedCount} 条）
-                  </Select.Option>
-                ))}
-            </Select>
-          </Col>
-          <Col span={8}>
-            <label>执行能力</label>
-            <Select
-              style={{ width: '100%' }}
-              value={executionConfig.capability || undefined}
-              onChange={(value) => setExecutionConfig((prev) => ({ ...prev, capability: value as ExecutionCapability, tagId: '' }))}
-              placeholder="请选择能力"
-            >
-              {Object.entries(capabilityLabels).map(([value, label]) => (
-                <Select.Option key={value} value={value}>{label}</Select.Option>
-              ))}
-            </Select>
-          </Col>
-          <Col span={8}>
-            <label>{executionConfig.capability === 'workflow' ? 'Workflow Tag ID' : 'Hermes Tag ID'}</label>
-            <Select
-              style={{ width: '100%' }}
-              value={executionConfig.tagId || undefined}
-              onChange={(value) => setExecutionConfig((prev) => ({ ...prev, tagId: value }))}
-              placeholder="请选择 Tag"
-            >
-              {availableTags.map((item) => (
-                <Select.Option key={item.id} value={item.id}>
-                  {item.name}
-                </Select.Option>
-              ))}
-            </Select>
-          </Col>
-        </Row>
-        <Row gutter={16} style={{ marginTop: 16 }}>
-          <Col span={18}>
-            <label>备注说明</label>
-            <Input.TextArea
-              value={executionConfig.description}
-              onChange={(e) => setExecutionConfig((prev) => ({ ...prev, description: e.target.value }))}
-              rows={2}
-              placeholder="补充执行说明，例如本次使用的模型策略、业务背景"
-            />
-          </Col>
-          <Col span={6} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end' }}>
-            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleExecuteTaskModel}>
-              执行模型
-            </Button>
-          </Col>
-        </Row>
-      </Card>
-    </div>
-  );
-
-  const disposeTaskRows = tasks.filter((task) => ['model_completed', 'disposal_pending', 'disposal_completed'].includes(task.status));
-  const disposeSeedsContent = (
-    <div>
-      <Card title="处置种子" style={{ marginBottom: 24 }}>
-        <Alert
-          type="info"
-          showIcon
-          message="模型执行完毕的任务可在此发起处置审批，审批通过后系统自动完成种子处置。"
-        />
-      </Card>
-
-      <Table
-        rowKey="id"
-        dataSource={disposeTaskRows}
-        pagination={{ pageSize: 6 }}
-        columns={[
-          { title: '任务名称', dataIndex: 'name', key: 'name' },
-          {
-            title: '场景',
-            dataIndex: 'sceneType',
-            key: 'sceneType',
-            render: (value: SceneType) => renderScene(value),
-          },
-          {
-            title: '模型结果摘要',
-            key: 'stats',
-            render: (_, record: Task) => (
-              <span>
-                建议清除 {record.modelResultStats?.suggestClear || 0} / 建议保留 {record.modelResultStats?.suggestKeep || 0}
-              </span>
-            ),
-          },
-          {
-            title: '处置审批',
-            key: 'disposal',
-            render: (_, record: Task) =>
-              record.disposalApproval
-                ? <Tag color={record.disposalApproval.status === 'approved' ? 'green' : 'gold'}>{approvalStatusLabels[record.disposalApproval.status]}</Tag>
-                : <Tag>未提交</Tag>,
-          },
-          {
-            title: '操作',
-            key: 'action',
-            render: (_, record: Task) => (
-              <Space>
-                <Button size="small" onClick={() => { setSelectedTask(record); setShowTaskDetail(true); }}>查看</Button>
-                {record.status === 'model_completed' && (
-                  <Button size="small" type="primary" icon={<DeleteOutlined />} onClick={() => openDisposalModal(record)}>
-                    发起处置审批
-                  </Button>
-                )}
-                {record.status === 'disposal_pending' && record.disposalApproval?.status === 'pending' && (
-                  <Button size="small" type="primary" onClick={() => handleApproveDisposal(record.id)}>
-                    审批通过并处置
-                  </Button>
-                )}
-              </Space>
-            ),
-          },
-        ]}
-      />
-    </div>
-  );
-
-  const currentContent = {
-    taskCenter: taskCenterContent,
-    createTask: createTaskContent,
-    executeModel: executeModelContent,
-    disposeSeeds: disposeSeedsContent,
-  }[currentNav];
+        </Card>
+      </Space>
+    );
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -1169,7 +919,7 @@ function App() {
         <div style={{ padding: '24px 20px 16px' }}>
           <div className="page-title">素材种子批量更新工具</div>
           <div style={{ color: '#6e6e73', fontSize: 13, marginTop: 8 }}>
-            面向机审运营的 Demo，覆盖任务发起、审批、执行模型、处置闭环。
+            发起任务、模型执行、审批确认、清理处置集中管理。
           </div>
         </div>
         <Menu
@@ -1177,162 +927,164 @@ function App() {
           selectedKeys={[currentNav]}
           onClick={(item) => setCurrentNav(item.key as NavKey)}
           items={[
-            { key: 'taskCenter', icon: <HistoryOutlined />, label: '任务中心' },
-            { key: 'createTask', icon: <PlusCircleOutlined />, label: '发起任务' },
-            { key: 'executeModel', icon: <PlayCircleOutlined />, label: '执行模型' },
-            { key: 'disposeSeeds', icon: <DeleteOutlined />, label: '处置种子' },
+            { key: 'createTask', icon: <PlusCircleOutlined />, label: '发起新任务' },
+            { key: 'taskCenter', icon: <SearchOutlined />, label: '任务中心' },
           ]}
         />
       </Layout.Sider>
       <Layout>
         <Layout.Header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div className="header-title">
-            {currentNav === 'taskCenter' && '任务中心'}
-            {currentNav === 'createTask' && '发起任务'}
-            {currentNav === 'executeModel' && '执行模型'}
-            {currentNav === 'disposeSeeds' && '处置种子'}
-          </div>
-          <Tag color="blue">Demo / Mock Data</Tag>
+          <div className="header-title">{currentNav === 'createTask' ? '发起新任务' : '任务中心'}</div>
+          <Button icon={<QuestionCircleOutlined />} onClick={() => Modal.info({
+            title: 'User Guide',
+            width: 880,
+            content: (
+              <div className="guide-panel">
+                <div className="guide-hero">
+                  <div>
+                    <div className="guide-eyebrow">Policy Iteration Workflow</div>
+                    <div className="guide-title">素材结果种子清理流程</div>
+                    <div className="guide-desc">
+                      在政策迭代场景中，历史已经入库的素材/创意结果种子可能不再符合新的策略边界。工具用于筛选、模型复核和清理此前入库结果，避免后续机审错误复用旧结果，造成漏放或误伤。
+                    </div>
+                  </div>
+                  <div className="guide-badge">6 个操作步骤</div>
+                </div>
+                <div className="guide-flow">
+                  <span>发起任务</span>
+                  <span>执行模型</span>
+                  <span>审批确认</span>
+                  <span>清理处置</span>
+                </div>
+                <Row gutter={[12, 12]}>
+                  {[
+                    ['1', '选择场景', '先判断本次策略变化是政策放宽还是政策收严。放宽通常关注历史拒绝结果是否需要移除；收严通常关注高风险 CCR 种子是否需要置为无效。'],
+                    ['2', '配置筛选条件', '按市场、Object Type、种子状态等条件圈定范围。收严场景支持 P0/P1 及二级 CCR 区间平铺输入，放宽场景支持审核来源、Policy、Provision。'],
+                    ['3', '生成 Task ID', '点击生成种子筛选任务后形成一条任务记录。任务发起不需要审批，并立即进入任务中心的“待执行模型”节点。'],
+                    ['4', '预览种子与详情', '生成任务后展示种子列表，可预览图片、视频、文本和 Link，并可打开右侧详情查看 Object 信息、模型结果和 BI Troubleshooting 跳转。'],
+                    ['5', '执行模型', '在任务中心勾选单个或多个“待执行模型”任务，打开抽屉选择 Hermes / Workflow 和 Tag ID，提交后进入“模型执行中”。'],
+                    ['6', '审批确认与清理', '模型返回后进入“模型执行完毕，待审批确认”。审批通过后进入“审批通过，待清理”，可触发清理并将种子置为无效；审批拒绝则任务终止。'],
+                  ].map(([step, title, desc]) => (
+                    <Col span={12} key={step}>
+                      <div className="guide-step-card">
+                        <div className="guide-step-number">{step}</div>
+                        <div>
+                          <div className="guide-step-title">{title}</div>
+                          <div className="guide-step-desc">{desc}</div>
+                        </div>
+                      </div>
+                    </Col>
+                  ))}
+                </Row>
+              </div>
+            ),
+          })}
+          >
+            User Guide
+          </Button>
         </Layout.Header>
         <Layout.Content style={{ padding: 24 }}>
-          {currentContent}
+          {currentNav === 'createTask' ? createTaskContent : taskCenterContent}
         </Layout.Content>
       </Layout>
 
-      <Drawer
-        width={720}
-        title="任务详情"
-        open={showTaskDetail}
-        onClose={() => setShowTaskDetail(false)}
-      >
+      <Drawer title="执行模型" open={executionDrawerOpen} width={620} onClose={() => setExecutionDrawerOpen(false)}>
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Alert type="info" showIcon message={`已选择 ${executionTaskIds.length} 个任务`} description={executionTaskIds.join(' / ')} />
+          <div>
+            <label>执行能力</label>
+            <Select
+              style={{ width: '100%' }}
+              value={executionConfig.capability || undefined}
+                onChange={(value) => setExecutionConfig((prev: ExecutionConfig) => ({ ...prev, capability: value as ExecutionCapability, tagId: '' }))}
+              placeholder="请选择 Hermes 或 Workflow"
+            >
+                {(Object.entries(capabilityLabels) as Array<[ExecutionCapability, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+            </Select>
+          </div>
+          <div>
+            <label>{executionConfig.capability === 'workflow' ? 'Workflow Tag ID' : 'Hermes Tag ID'}</label>
+            <Select
+              style={{ width: '100%' }}
+              value={executionConfig.tagId || undefined}
+                onChange={(value) => setExecutionConfig((prev: ExecutionConfig) => ({ ...prev, tagId: value as string }))}
+              placeholder="请选择 Tag"
+            >
+              {availableTags.map((item) => <Select.Option key={item.id} value={item.id}>{item.name}</Select.Option>)}
+            </Select>
+          </div>
+          <div>
+            <label>执行说明</label>
+            <Input.TextArea
+              value={executionConfig.description}
+                onChange={(event) => setExecutionConfig((prev: ExecutionConfig) => ({ ...prev, description: event.target.value }))}
+              rows={3}
+              placeholder="补充本次执行模型的策略、范围和注意事项"
+            />
+          </div>
+          <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRunModel}>提交执行</Button>
+        </Space>
+      </Drawer>
+
+      <Drawer title="任务详情" open={showTaskDetail} width={860} onClose={() => setShowTaskDetail(false)}>
         {selectedTask && (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Descriptions bordered column={2}>
               <Descriptions.Item label="任务名称" span={2}>{selectedTask.name}</Descriptions.Item>
-              <Descriptions.Item label="任务备注" span={2}>{selectedTask.remark || '-'}</Descriptions.Item>
-              <Descriptions.Item label="场景类型">{selectedTask.sceneType === 'relax' ? '政策放宽' : '政策收严'}</Descriptions.Item>
-              <Descriptions.Item label="任务状态">{taskStatusLabels[selectedTask.status]}</Descriptions.Item>
+              <Descriptions.Item label="Task ID">{selectedTask.id}</Descriptions.Item>
+              <Descriptions.Item label="流程节点">{renderTaskStatus(selectedTask.status)}</Descriptions.Item>
+              <Descriptions.Item label="场景">{renderScene(selectedTask.sceneType)}</Descriptions.Item>
               <Descriptions.Item label="种子数量">{selectedTask.seedCount}</Descriptions.Item>
+              <Descriptions.Item label="提交人">{getTaskSubmitter(selectedTask)}</Descriptions.Item>
               <Descriptions.Item label="创建时间">{selectedTask.createdAt}</Descriptions.Item>
+              <Descriptions.Item label="更新时间">{selectedTask.updatedAt}</Descriptions.Item>
+              <Descriptions.Item label="备注" span={2}>{selectedTask.remark || '-'}</Descriptions.Item>
               <Descriptions.Item label="筛选摘要" span={2}>{taskFilterSummary(selectedTask)}</Descriptions.Item>
             </Descriptions>
-
-            {selectedTask.batchApproval && (
-              <Card size="small" title="量级审批">
-                <Descriptions column={1} size="small">
-                  <Descriptions.Item label="审批状态">{batchApprovalStatusLabels[selectedTask.batchApproval.status]}</Descriptions.Item>
-                  <Descriptions.Item label="审批原因">{selectedTask.batchApproval.reason || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="审批人">{selectedTask.batchApproval.approvedBy || '-'}</Descriptions.Item>
-                </Descriptions>
-              </Card>
+            {selectedTask.status === 'pending_model' && <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => openExecutionDrawer([selectedTask.id])}>执行模型</Button>}
+            {selectedTask.status === 'model_completed' && (
+              <Space>
+                <Button type="primary" onClick={() => updateTaskStatus([selectedTask.id], 'approval_approved', '审批已通过，任务进入待清理')}>审批通过</Button>
+                <Button danger onClick={() => updateTaskStatus([selectedTask.id], 'approval_rejected', '审批已拒绝，任务终止')}>审批拒绝</Button>
+              </Space>
             )}
-
-            {selectedTask.executionConfig && (
-              <Card size="small" title="执行配置">
-                <Descriptions column={1} size="small">
-                  <Descriptions.Item label="执行能力">{selectedTask.executionConfig.capability ? capabilityLabels[selectedTask.executionConfig.capability] : '-'}</Descriptions.Item>
-                  <Descriptions.Item label="Tag ID">{selectedTask.executionConfig.tagId || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="备注">{selectedTask.executionConfig.description || '-'}</Descriptions.Item>
-                </Descriptions>
-              </Card>
-            )}
-
-            {selectedTask.disposalApproval && (
-              <Card size="small" title="处置审批">
-                <Descriptions column={1} size="small">
-                  <Descriptions.Item label="审批状态">{approvalStatusLabels[selectedTask.disposalApproval.status]}</Descriptions.Item>
-                  <Descriptions.Item label="处置原因">{selectedTask.disposalApproval.reason}</Descriptions.Item>
-                  <Descriptions.Item label="审批人">{selectedTask.disposalApproval.approvedBy || '-'}</Descriptions.Item>
-                </Descriptions>
-              </Card>
-            )}
+            {selectedTask.status === 'approval_approved' && <Button type="primary" icon={<DeleteOutlined />} onClick={() => handleCleanTasks([selectedTask.id])}>清理种子</Button>}
+            <Card size="small" title="任务种子">
+              <Table rowKey="id" dataSource={detailTaskSeeds} columns={seedColumns} scroll={{ x: 1200 }} pagination={{ pageSize: 5 }} />
+            </Card>
           </Space>
         )}
       </Drawer>
 
-      <Drawer
-        width={680}
-        title="种子详情"
-        open={showSeedDetail}
-        onClose={() => setShowSeedDetail(false)}
-      >
+      <Drawer title="种子详情" open={showSeedDetail} width={720} onClose={() => setShowSeedDetail(false)}>
         {detailSeed && (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            {renderSeedPreview(detailSeed)}
             <Descriptions bordered column={2}>
               <Descriptions.Item label="种子 ID">{detailSeed.id}</Descriptions.Item>
               <Descriptions.Item label="Object ID">{detailSeed.objectId}</Descriptions.Item>
+              <Descriptions.Item label="Object Type">{objectTypeLabels[detailSeed.objectType]}</Descriptions.Item>
               <Descriptions.Item label="种子类型">{seedTypeLabels[detailSeed.seedType]}</Descriptions.Item>
-              <Descriptions.Item label="审核来源">{auditSourceLabels[detailSeed.auditSource]}</Descriptions.Item>
-              <Descriptions.Item label="国家/地区">{countryLabels[detailSeed.country]}</Descriptions.Item>
+              <Descriptions.Item label="市场">{countryLabels[detailSeed.country]}</Descriptions.Item>
               <Descriptions.Item label="行业">{industryLabels[detailSeed.industry]}</Descriptions.Item>
-              <Descriptions.Item label="Policy">{detailSeed.policyCode}</Descriptions.Item>
-              <Descriptions.Item label="Provision">{detailSeed.provision}</Descriptions.Item>
-              <Descriptions.Item label="执行状态">{renderExecutionStatus(detailSeed.executionStatus)}</Descriptions.Item>
+              <Descriptions.Item label="审核来源">{auditSourceLabels[detailSeed.auditSource]}</Descriptions.Item>
+              <Descriptions.Item label="当前状态">{seedStatusLabels[detailSeed.seedStatus]}</Descriptions.Item>
+              <Descriptions.Item label="CCR">{Math.round(detailSeed.ccr * 100)}%</Descriptions.Item>
               <Descriptions.Item label="模型结论">{renderModelConclusion(detailSeed.modelResult?.conclusion)}</Descriptions.Item>
+              <Descriptions.Item label="模型原因" span={2}>{detailSeed.modelResult?.reason || '-'}</Descriptions.Item>
             </Descriptions>
+            <Button
+              type="primary"
+              href={`https://bi.bytedance.net/troubleshooting?object_id=${detailSeed.objectId}`}
+              target="_blank"
+              rel="noreferrer"
+              icon={<InfoCircleOutlined />}
+            >
+              跳转 BI Troubleshooting
+            </Button>
           </Space>
         )}
       </Drawer>
-
-      <Modal
-        title="量级审批"
-        open={showBatchApprovalModal}
-        onCancel={() => setShowBatchApprovalModal(false)}
-        onOk={handleConfirmBatchApproval}
-        okText="提交审批"
-        cancelText="取消"
-      >
-        {currentBatchApproval && (
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Descriptions column={2} size="small">
-              <Descriptions.Item label="场景类型">{sceneType === 'relax' ? '政策放宽' : '政策收严'}</Descriptions.Item>
-              <Descriptions.Item label="筛选种子数量">{currentBatchApproval.seedCount}</Descriptions.Item>
-              <Descriptions.Item label="审核环节来源">{filterConditions.auditSource?.map((item) => auditSourceLabels[item]).join(' / ') || '-'}</Descriptions.Item>
-              <Descriptions.Item label="Policy Code">{filterConditions.policyCode?.join(' / ') || '-'}</Descriptions.Item>
-              <Descriptions.Item label="Provision">{filterConditions.provision?.join(' / ') || '-'}</Descriptions.Item>
-              <Descriptions.Item label="CCR 条件">{filterConditions.secondaryCCR?.map((item) => secondaryCCRLabels[item]).join(' / ') || '-'}</Descriptions.Item>
-            </Descriptions>
-            <Input.TextArea
-              value={batchApprovalReason}
-              onChange={(e) => setBatchApprovalReason(e.target.value)}
-              rows={4}
-              placeholder="请说明本次量级审批原因"
-            />
-            <Alert
-              type="warning"
-              showIcon
-              message="提交后将触发飞书审批流，需运营 Leader 审批通过后方可执行模型。"
-            />
-          </Space>
-        )}
-      </Modal>
-
-      <Modal
-        title="处置审批"
-        open={showDisposalModal}
-        onCancel={() => setShowDisposalModal(false)}
-        onOk={handleSubmitDisposalApproval}
-        okText="提交审批"
-        cancelText="取消"
-      >
-        {currentDisposalTask && (
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Descriptions column={2} size="small">
-              <Descriptions.Item label="任务名称" span={2}>{currentDisposalTask.name}</Descriptions.Item>
-              <Descriptions.Item label="场景类型">{currentDisposalTask.sceneType === 'relax' ? '政策放宽' : '政策收严'}</Descriptions.Item>
-              <Descriptions.Item label="种子数量">{currentDisposalTask.seedCount}</Descriptions.Item>
-              <Descriptions.Item label="建议清除">{currentDisposalTask.modelResultStats?.suggestClear || 0}</Descriptions.Item>
-              <Descriptions.Item label="建议保留">{currentDisposalTask.modelResultStats?.suggestKeep || 0}</Descriptions.Item>
-            </Descriptions>
-            <Input.TextArea
-              value={disposalReason}
-              onChange={(e) => setDisposalReason(e.target.value)}
-              rows={4}
-              placeholder="请填写处置审批原因"
-            />
-          </Space>
-        )}
-      </Modal>
     </Layout>
   );
 }

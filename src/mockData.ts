@@ -8,8 +8,8 @@ const adLevels = ['P0', 'P1', 'P2', 'P3'] as const;
 const objectTypes = ['image', 'video', 'text', 'landing_page'] as const;
 const auditSources: AuditSourceType[] = ['pre_review', 'first_review', 'post_review', 'appeal', 'ts'];
 
-const p0SecondaryCCRs: SecondaryCCRType[] = ['p0_sexual_ccr', 'p0_fraud_ccr', 'p0_vulgar_ccr', 'p0_political_ccr', 'p0_adult_ccr'];
-const p1SecondaryCCRs: SecondaryCCRType[] = ['p1_sexual_ccr', 'p1_fraud_ccr', 'p1_vulgar_ccr', 'p1_political_ccr', 'p1_adult_ccr'];
+const p0SecondaryCCRs: SecondaryCCRType[] = ['p0_sexual_ccr', 'p0_fraud_ccr', 'p0_counterfeit_ccr', 'p0_gambling_ccr'];
+const p1SecondaryCCRs: SecondaryCCRType[] = ['p1_vulgar_ccr', 'p1_misleading_ccr', 'p1_discomforting_ccr'];
 
 function randomItem<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -410,8 +410,8 @@ export const deliveryStatusLabels: Record<string, string> = {
 };
 
 export const seedStatusLabels: Record<string, string> = {
-  active: '生效中',
-  cleared: '已清除',
+  active: '可复用',
+  cleared: '已置为无效',
 };
 
 export const executionStatusLabels: Record<string, string> = {
@@ -453,14 +453,11 @@ export const batchApprovalStatusLabels: Record<string, string> = {
 export const secondaryCCRLabels: Record<string, string> = {
   'p0_sexual_ccr': 'P0-色情CCR',
   'p0_fraud_ccr': 'P0-欺诈CCR',
-  'p0_vulgar_ccr': 'P0-低俗CCR',
-  'p0_political_ccr': 'P0-政治CCR',
-  'p0_adult_ccr': 'P0-成人CCR',
-  'p1_sexual_ccr': 'P1-色情CCR',
-  'p1_fraud_ccr': 'P1-欺诈CCR',
+  'p0_counterfeit_ccr': 'P0-仿冒CCR',
+  'p0_gambling_ccr': 'P0-赌博CCR',
   'p1_vulgar_ccr': 'P1-低俗CCR',
-  'p1_political_ccr': 'P1-政治CCR',
-  'p1_adult_ccr': 'P1-成人CCR',
+  'p1_misleading_ccr': 'P1-误导CCR',
+  'p1_discomforting_ccr': 'P1-不适CCR',
 };
 
 export const hermesTags = [
@@ -479,22 +476,28 @@ export const workflowTags = [
 ];
 
 export const taskStatusLabels: Record<string, string> = {
+  pending_model: '待执行模型',
+  model_executing: '模型执行中',
+  model_completed: '模型执行完毕，待审批确认',
+  approval_approved: '审批通过，待清理',
+  approval_rejected: '审批拒绝，终止',
+  disposal_completed: '处置完毕',
   draft: '草稿',
   pending_approval: '待审批',
-  model_executing: '模型评估中',
-  model_completed: '模型评估完毕待处置',
   disposal_pending: '处置审批中',
-  disposal_completed: '处置完毕',
   abandoned: '废弃',
 };
 
 export const taskStatusColors: Record<string, string> = {
+  pending_model: 'blue',
+  model_executing: 'processing',
+  model_completed: 'purple',
+  approval_approved: 'green',
+  approval_rejected: 'red',
+  disposal_completed: 'green',
   draft: 'default',
   pending_approval: 'orange',
-  model_executing: 'blue',
-  model_completed: 'purple',
   disposal_pending: 'orange',
-  disposal_completed: 'green',
   abandoned: 'gray',
 };
 
