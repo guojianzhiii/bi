@@ -5,7 +5,7 @@ const industryOptions = ['ecommerce', 'game', 'finance', 'health', 'education', 
 export const policyCodes = ['POLICY_001', 'POLICY_002', 'POLICY_003', 'POLICY_004', 'POLICY_005', 'POLICY_006'];
 export const provisions = ['PROV_A', 'PROV_B', 'PROV_C', 'PROV_D', 'PROV_E'];
 const adLevels = ['P0', 'P1', 'P2', 'P3'] as const;
-const objectTypes = ['image', 'video', 'text', 'landing_page'] as const;
+const objectTypes = ['image', 'video', 'text', 'landing_page', 'creative'] as const;
 const auditSources: AuditSourceType[] = ['pre_review', 'first_review', 'post_review', 'appeal', 'ts'];
 
 const p0SecondaryCCRs: SecondaryCCRType[] = ['p0_sexual_ccr', 'p0_fraud_ccr', 'p0_counterfeit_ccr', 'p0_gambling_ccr'];
@@ -402,6 +402,7 @@ export const objectTypeLabels: Record<string, string> = {
   video: '视频素材',
   text: '文案素材',
   landing_page: '落地页',
+  creative: '创意',
 };
 
 export const deliveryStatusLabels: Record<string, string> = {

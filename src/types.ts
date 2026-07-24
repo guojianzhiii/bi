@@ -2,7 +2,22 @@ export type SceneType = 'relax' | 'tighten';
 
 export type SeedType = 'material' | 'creative';
 
-export type ObjectType = 'image' | 'video' | 'text' | 'landing_page';
+export type ObjectType = 'image' | 'video' | 'text' | 'landing_page' | 'creative';
+
+export type CcrOperator = 'gte' | 'lte';
+
+export type LogicalOperator = 'and' | 'or';
+
+export interface CcrCondition {
+  metric: CcrMetricType;
+  operator: CcrOperator;
+  value: number;
+}
+
+export interface CcrConditionGroup {
+  conditions: CcrCondition[];
+  logicalOperator: LogicalOperator;
+}
 
 export type CountryType = 'US' | 'GB' | 'ID' | 'VN' | 'TH' | 'BR' | 'JP' | 'KR' | 'DE' | 'FR';
 
@@ -133,10 +148,7 @@ export interface FilterCondition {
   provision?: string[];
   p0CCRArea?: CCRArea[];
   p1CCRArea?: CCRArea[];
-  ccrRanges?: Partial<Record<CcrMetricType, {
-    gte?: number;
-    lte?: number;
-  }>>;
+  ccrConditions?: CcrConditionGroup;
   secondaryCCR?: SecondaryCCRType[];
   deliveryStatus?: DeliveryStatus[];
   seedStatus?: SeedStatus[];

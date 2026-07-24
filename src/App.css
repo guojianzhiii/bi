@@ -219,6 +219,20 @@
   font-weight: 600;
 }
 
+.ccr-condition-row {
+  padding: 14px;
+  border-radius: 16px;
+  background: #fbfbfd;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  margin-bottom: 10px;
+}
+
+.ccr-condition-num {
+  font-weight: 700;
+  color: #86868b;
+  font-size: 12px;
+}
+
 .task-list-note {
   margin-bottom: 14px;
   padding: 10px 14px;

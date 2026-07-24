@@ -32,10 +32,13 @@ import {
   SearchOutlined,
 } from '@ant-design/icons';
 import type {
+  CcrCondition,
   CcrMetricType,
+  CcrOperator,
   ExecutionCapability,
   ExecutionConfig,
   FilterCondition,
+  LogicalOperator,
   ModelConclusion,
   OperationLog,
   SceneType,
@@ -48,8 +51,6 @@ import './App.css';
 
 type NavKey = 'createTask' | 'taskCenter';
 type ValidConclusion = 'suggest_clear' | 'suggest_keep';
-type CcrOperator = 'gte' | 'lte';
-type CcrRange = NonNullable<FilterCondition['ccrRanges']>[CcrMetricType];
 type TagOption = {
   id: string;
   name: string;
@@ -60,6 +61,7 @@ type TaskFilters = {
   taskId?: string;
   market?: string[];
   objectType?: string[];
+  taskStatus?: TaskStatus;
   createdStart?: string;
   createdEnd?: string;
 };
@@ -95,8 +97,6 @@ const ccrMetricLabels: Record<CcrMetricType, string> = {
   p1_misleading_ccr: 'P1 Misleading CCR',
   p1_discomforting_ccr: 'P1 Discomforting CCR',
 };
-
-const tightenCcrMetrics = Object.keys(ccrMetricLabels) as CcrMetricType[];
 
 const statusColorMap: Record<TaskStatus, string> = {
   pending_model: 'blue',
@@ -188,6 +188,7 @@ function App() {
   const [showTaskDetail, setShowTaskDetail] = useState(false);
   const [detailSeed, setDetailSeed] = useState<Seed | null>(null);
   const [showSeedDetail, setShowSeedDetail] = useState(false);
+  const [showSeedModelResult, setShowSeedModelResult] = useState(false);
   const [executionDrawerOpen, setExecutionDrawerOpen] = useState(false);
   const [executionTaskIds, setExecutionTaskIds] = useState<string[]>([]);
   const [executionConfig, setExecutionConfig] = useState<ExecutionConfig>({
@@ -241,17 +242,21 @@ function App() {
         result = result.filter((seed) => filterConditions.provision?.includes(seed.provision));
       }
     }
-    if (sceneType === 'tighten' && filterConditions.ccrRanges) {
-      const ccrEntries = Object.entries(filterConditions.ccrRanges) as Array<[CcrMetricType, CcrRange]>;
-      ccrEntries.forEach(([metric, range]) => {
-        if (range?.gte === undefined && range?.lte === undefined) return;
-        result = result.filter((seed) => {
-          const value = getSeedMetricValue(seed, metric);
+    if (sceneType === 'tighten' && filterConditions.ccrConditions) {
+      const { conditions, logicalOperator } = filterConditions.ccrConditions;
+      if (conditions.length === 0) return result;
+      result = result.filter((seed) => {
+        const matchResults = conditions.map((condition) => {
+          const value = getSeedMetricValue(seed, condition.metric);
           if (value === undefined) return false;
-          if (range.gte !== undefined && value < range.gte) return false;
-          if (range.lte !== undefined && value > range.lte) return false;
+          if (condition.operator === 'gte' && value < condition.value) return false;
+          if (condition.operator === 'lte' && value > condition.value) return false;
           return true;
         });
+        if (logicalOperator === 'and') {
+          return matchResults.every((m) => m);
+        }
+        return matchResults.some((m) => m);
       });
     }
     return result;
@@ -280,6 +285,7 @@ function App() {
           const objectTypes = (task.filterConditions.objectType || []) as string[];
           if (!objectTypes.some((type: string) => appliedTaskFilters.objectType?.includes(type))) return false;
         }
+        if (appliedTaskFilters.taskStatus && task.status !== appliedTaskFilters.taskStatus) return false;
         if (appliedTaskFilters.createdStart && task.createdAt < appliedTaskFilters.createdStart) return false;
         if (appliedTaskFilters.createdEnd && task.createdAt > `${appliedTaskFilters.createdEnd} 23:59:59`) return false;
         return true;
@@ -313,18 +319,64 @@ function App() {
     setCurrentPage(1);
   };
 
-  const updateCcrRange = (metric: CcrMetricType, operator: CcrOperator, rawValue: string) => {
-    const parsed = rawValue === '' ? undefined : Number(rawValue);
-    setFilterConditions((prev: FilterCondition) => ({
-      ...prev,
-      ccrRanges: {
-        ...prev.ccrRanges,
-        [metric]: {
-          ...prev.ccrRanges?.[metric],
-          [operator]: Number.isFinite(parsed) ? parsed : undefined,
+  const addCcrCondition = () => {
+    setFilterConditions((prev: FilterCondition) => {
+      const existing = prev.ccrConditions || { conditions: [], logicalOperator: 'and' };
+      return {
+        ...prev,
+        ccrConditions: {
+          ...existing,
+          conditions: [
+            ...existing.conditions,
+            { metric: 'p0_ccr', operator: 'gte', value: 0.7 },
+          ],
         },
-      },
-    }));
+      };
+    });
+    setCreatedTaskId('');
+    setPreviewSeeds([]);
+  };
+
+  const updateCcrCondition = (index: number, field: keyof CcrCondition, value: CcrMetricType | CcrOperator | number) => {
+    setFilterConditions((prev: FilterCondition) => {
+      const existing = prev.ccrConditions || { conditions: [], logicalOperator: 'and' };
+      return {
+        ...prev,
+        ccrConditions: {
+          ...existing,
+          conditions: existing.conditions.map((cond, i) =>
+            i === index ? { ...cond, [field]: value } : cond,
+          ),
+        },
+      };
+    });
+    setCreatedTaskId('');
+    setPreviewSeeds([]);
+  };
+
+  const removeCcrCondition = (index: number) => {
+    setFilterConditions((prev: FilterCondition) => {
+      const existing = prev.ccrConditions || { conditions: [], logicalOperator: 'and' };
+      return {
+        ...prev,
+        ccrConditions: {
+          ...existing,
+          conditions: existing.conditions.filter((_, i) => i !== index),
+        },
+      };
+    });
+    setCreatedTaskId('');
+    setPreviewSeeds([]);
+  };
+
+  const updateLogicalOperator = (operator: LogicalOperator) => {
+    setFilterConditions((prev: FilterCondition) => {
+      const existing = prev.ccrConditions || { conditions: [], logicalOperator: 'and' };
+      return {
+        ...prev,
+        ccrConditions: { ...existing, logicalOperator: operator },
+      };
+    });
     setCreatedTaskId('');
     setPreviewSeeds([]);
   };
@@ -359,7 +411,8 @@ function App() {
     const sceneLabel = sceneType === 'relax' ? '政策放宽' : '政策收严';
     const market = filterConditions.country?.[0] || 'US';
     const dateLabel = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    return `${sceneLabel}-${dateLabel}-${market}-种子筛选`;
+    const purpose = sceneType === 'relax' ? 'gambling policy种子清理' : '高CCR种子清理';
+    return `${sceneLabel}-${dateLabel}-${market}-${purpose}`;
   };
 
   const validateTaskMeta = () => {
@@ -570,28 +623,37 @@ function App() {
     return <div className="preview-card"><div className="preview-landing">{`https://ads.example.com/${seed.objectId}`}</div></div>;
   };
 
-  const openSeedDetail = (seed: Seed) => {
+  const openSeedDetail = (seed: Seed, showModelResult = false) => {
     setDetailSeed(seed);
+    setShowSeedModelResult(showModelResult);
     setShowSeedDetail(true);
   };
 
-  const seedColumns: TableProps<Seed>['columns'] = [
-    { title: '预览', key: 'preview', width: 110, render: (_, record) => renderSeedPreview(record) },
-    { title: '种子 ID', dataIndex: 'id', key: 'id', width: 150 },
-    { title: 'Object ID', dataIndex: 'objectId', key: 'objectId', width: 180 },
-    { title: 'Object Type', dataIndex: 'objectType', key: 'objectType', width: 120, render: (value: Seed['objectType']) => objectTypeLabels[value] },
-    { title: '市场', dataIndex: 'country', key: 'country', width: 100, render: (value: Seed['country']) => countryLabels[value] },
-    { title: '行业', dataIndex: 'industry', key: 'industry', width: 100, render: (value: Seed['industry']) => industryLabels[value] },
-    { title: '种子状态', dataIndex: 'seedStatus', key: 'seedStatus', width: 120, render: (value: Seed['seedStatus']) => seedStatusLabels[value] },
-    { title: '模型结论', dataIndex: 'modelResult', key: 'modelResult', width: 140, render: (value: Seed['modelResult']) => renderModelConclusion(value?.conclusion) },
-    {
+  const getSeedColumns = (showModelResult = false): TableProps<Seed>['columns'] => {
+    const columns: TableProps<Seed>['columns'] = [
+      { title: '预览', key: 'preview', width: 110, render: (_, record) => renderSeedPreview(record) },
+      { title: '种子 ID', dataIndex: 'id', key: 'id', width: 150 },
+      { title: 'Object ID', dataIndex: 'objectId', key: 'objectId', width: 180 },
+      { title: 'Object Type', dataIndex: 'objectType', key: 'objectType', width: 120, render: (value: Seed['objectType']) => objectTypeLabels[value] },
+      { title: '市场', dataIndex: 'country', key: 'country', width: 100, render: (value: Seed['country']) => countryLabels[value] },
+      { title: '行业', dataIndex: 'industry', key: 'industry', width: 100, render: (value: Seed['industry']) => industryLabels[value] },
+      { title: '种子状态', dataIndex: 'seedStatus', key: 'seedStatus', width: 120, render: (value: Seed['seedStatus']) => seedStatusLabels[value] },
+    ];
+
+    if (showModelResult) {
+      columns.push({ title: '模型结论', dataIndex: 'modelResult', key: 'modelResult', width: 140, render: (value: Seed['modelResult']) => renderModelConclusion(value?.conclusion) });
+    }
+
+    columns.push({
       title: '操作',
       key: 'action',
       width: 110,
       fixed: 'right',
-      render: (_, record) => <Button type="link" icon={<EyeOutlined />} onClick={() => openSeedDetail(record)}>详情</Button>,
-    },
-  ];
+      render: (_, record) => <Button type="link" icon={<EyeOutlined />} onClick={() => openSeedDetail(record, showModelResult)}>详情</Button>,
+    });
+
+    return columns;
+  };
 
   const taskFilterSummary = (task: Task) => {
     const parts: string[] = [];
@@ -600,12 +662,13 @@ function App() {
     if (task.filterConditions.auditSource?.length) parts.push(`审核来源：${(task.filterConditions.auditSource as string[]).map((item: string) => auditSourceLabels[item]).join(' / ')}`);
     if (task.filterConditions.policyCode?.length) parts.push(`Policy：${task.filterConditions.policyCode.join(' / ')}`);
     if (task.filterConditions.provision?.length) parts.push(`Provision：${task.filterConditions.provision.join(' / ')}`);
-    if (task.filterConditions.ccrRanges) {
-      const ccrEntries = Object.entries(task.filterConditions.ccrRanges) as Array<[CcrMetricType, CcrRange]>;
-      const ccrParts = ccrEntries
-        .filter(([, range]) => range?.gte !== undefined || range?.lte !== undefined)
-        .map(([metric, range]) => `${ccrMetricLabels[metric]} ${range?.gte !== undefined ? `>=${range.gte}` : ''} ${range?.lte !== undefined ? `<=${range.lte}` : ''}`.trim());
-      if (ccrParts.length) parts.push(`CCR：${ccrParts.join(' / ')}`);
+    if (task.filterConditions.ccrConditions) {
+      const { conditions, logicalOperator } = task.filterConditions.ccrConditions;
+      const ccrParts = conditions.map((cond) => {
+        const opLabel = cond.operator === 'gte' ? '>=' : '<=';
+        return `${ccrMetricLabels[cond.metric]} ${opLabel}${cond.value}`;
+      });
+      if (ccrParts.length) parts.push(`CCR：${ccrParts.join(` ${logicalOperator === 'and' ? '且' : '或'} `)}`);
     }
     return parts.length > 0 ? parts.join(' | ') : '未记录筛选摘要';
   };
@@ -629,7 +692,7 @@ function App() {
             <Col span={12}>
               <label>任务名称</label>
               <Input value={taskName} onChange={(event) => setTaskName(event.target.value)} placeholder={getTaskNameExample()} />
-              <div className="field-hint">建议格式：场景-YYYYMMDD-市场-任务目的，例如：政策收严-20260720-US-高CCR种子清理</div>
+              <div className="field-hint">建议格式：场景-YYYYMMDD-市场-任务目的，例如：{sceneType === 'relax' ? '政策放宽-20260720-US-gambling policy种子清理' : '政策收严-20260720-US-高CCR种子清理'}</div>
             </Col>
             <Col span={12}>
               <label>任务备注</label>
@@ -682,13 +745,15 @@ function App() {
                   {(Object.entries(countryLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
               </Select>
             </Col>
-            <Col span={6}>
-              <label>行业</label>
-              <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.industry} onChange={(value) => updateFilter('industry', value)}>
-                {(Object.entries(industryLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
-              </Select>
-            </Col>
-            <Col span={6}>
+            {sceneType === 'tighten' && (
+              <Col span={6}>
+                <label>行业</label>
+                <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.industry} onChange={(value) => updateFilter('industry', value)}>
+                  {(Object.entries(industryLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+                </Select>
+              </Col>
+            )}
+            <Col span={sceneType === 'relax' ? 6 : 6}>
               <label>当前种子状态</label>
               <Select mode="multiple" style={{ width: '100%' }} value={filterConditions.seedStatus} onChange={(value) => updateFilter('seedStatus', value)}>
                   {(Object.entries(seedStatusLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
@@ -721,42 +786,68 @@ function App() {
 
           {sceneType === 'tighten' && (
             <div>
-              <div style={{ fontWeight: 700, color: '#1d1d1f', marginBottom: 12 }}>CCR 区间</div>
-              <Row gutter={[12, 12]}>
-                {tightenCcrMetrics.map((metric) => (
-                  <Col span={8} key={metric}>
-                    <div className="ccr-range-card">
-                      <div className="ccr-range-title">{ccrMetricLabels[metric]}</div>
-                      <div className="ccr-range-inputs">
-                        <div className="ccr-range-input">
-                          <span>大于等于</span>
-                          <Input
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            placeholder="0.70"
-                            value={filterConditions.ccrRanges?.[metric]?.gte}
-                            onChange={(event) => updateCcrRange(metric, 'gte', event.target.value)}
-                          />
-                        </div>
-                        <div className="ccr-range-input">
-                          <span>小于等于</span>
-                          <Input
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            placeholder="0.95"
-                            value={filterConditions.ccrRanges?.[metric]?.lte}
-                            onChange={(event) => updateCcrRange(metric, 'lte', event.target.value)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </Col>
-                ))}
-              </Row>
+              <div style={{ fontWeight: 700, color: '#1d1d1f', marginBottom: 12 }}>CCR 自定义条件</div>
+              <div style={{ marginBottom: 12 }}>
+                <Button type="dashed" icon={<PlusCircleOutlined />} onClick={addCcrCondition}>
+                  添加条件
+                </Button>
+              </div>
+              {(filterConditions.ccrConditions?.conditions || []).map((condition, index) => (
+                <div key={index} className="ccr-condition-row">
+                  <Row gutter={8} align="middle">
+                    <Col span={2}>
+                      <span className="ccr-condition-num">条件{index + 1}</span>
+                    </Col>
+                    <Col span={5}>
+                      <Select
+                        style={{ width: '100%' }}
+                        value={condition.metric}
+                        onChange={(value) => updateCcrCondition(index, 'metric', value as CcrMetricType)}
+                      >
+                        {(Object.entries(ccrMetricLabels) as Array<[CcrMetricType, string]>).map(([value, label]) => (
+                          <Select.Option key={value} value={value}>{label}</Select.Option>
+                        ))}
+                      </Select>
+                    </Col>
+                    <Col span={4}>
+                      <Select
+                        style={{ width: '100%' }}
+                        value={condition.operator}
+                        onChange={(value) => updateCcrCondition(index, 'operator', value as CcrOperator)}
+                      >
+                        <Select.Option value="gte">大于等于</Select.Option>
+                        <Select.Option value="lte">小于等于</Select.Option>
+                      </Select>
+                    </Col>
+                    <Col span={4}>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={condition.value}
+                        onChange={(event) => updateCcrCondition(index, 'value', Number(event.target.value))}
+                      />
+                    </Col>
+                    <Col span={2}>
+                      <Button type="text" danger onClick={() => removeCcrCondition(index)}>删除</Button>
+                    </Col>
+                  </Row>
+                </div>
+              ))}
+              {(filterConditions.ccrConditions?.conditions || []).length >= 2 && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                  <span style={{ marginRight: 8, color: '#64748b' }}>条件关系：</span>
+                  <Segmented
+                    value={filterConditions.ccrConditions?.logicalOperator || 'and'}
+                    onChange={(value) => updateLogicalOperator(value as LogicalOperator)}
+                    options={[
+                      { value: 'and', label: '全部满足 (AND)' },
+                      { value: 'or', label: '任一满足 (OR)' },
+                    ]}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -783,7 +874,7 @@ function App() {
             <Table
               rowKey="id"
               dataSource={paginatedPreviewSeeds}
-              columns={seedColumns}
+              columns={getSeedColumns(false)}
               scroll={{ x: 1200 }}
               pagination={{ current: currentPage, pageSize, total: previewSeeds.length, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
               onChange={(pagination) => { setCurrentPage(pagination.current || 1); setPageSize(pagination.pageSize || 10); }}
@@ -827,6 +918,18 @@ function App() {
             <label>Object Type</label>
             <Select mode="multiple" style={{ width: '100%' }} value={taskFilters.objectType} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, objectType: value as string[] }))}>
               {(Object.entries(objectTypeLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+            </Select>
+          </Col>
+          <Col span={6}>
+            <label>流程节点</label>
+            <Select allowClear style={{ width: '100%' }} value={taskFilters.taskStatus} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, taskStatus: value as TaskStatus | undefined }))}>
+              <Select.Option value="pending_model">待执行模型</Select.Option>
+              <Select.Option value="model_executing">模型执行中</Select.Option>
+              <Select.Option value="model_completed">模型执行完毕，待审批确认</Select.Option>
+              <Select.Option value="approval_approved">审批通过，待清理</Select.Option>
+              <Select.Option value="approval_rejected">审批拒绝，终止</Select.Option>
+              <Select.Option value="disposal_completed">处置完毕</Select.Option>
+              <Select.Option value="abandoned">废弃</Select.Option>
             </Select>
           </Col>
           <Col span={6}>
@@ -917,7 +1020,7 @@ function App() {
     <Layout style={{ minHeight: '100vh' }}>
       <Layout.Sider width={260} theme="light">
         <div style={{ padding: '24px 20px 16px' }}>
-          <div className="page-title">素材种子批量更新工具</div>
+          <div className="page-title">结果库批量处理工作台</div>
           <div style={{ color: '#6e6e73', fontSize: 13, marginTop: 8 }}>
             发起任务、模型执行、审批确认、清理处置集中管理。
           </div>
@@ -1050,7 +1153,7 @@ function App() {
             )}
             {selectedTask.status === 'approval_approved' && <Button type="primary" icon={<DeleteOutlined />} onClick={() => handleCleanTasks([selectedTask.id])}>清理种子</Button>}
             <Card size="small" title="任务种子">
-              <Table rowKey="id" dataSource={detailTaskSeeds} columns={seedColumns} scroll={{ x: 1200 }} pagination={{ pageSize: 5 }} />
+              <Table rowKey="id" dataSource={detailTaskSeeds} columns={getSeedColumns(selectedTask.status !== 'pending_model')} scroll={{ x: 1200 }} pagination={{ pageSize: 5 }} />
             </Card>
           </Space>
         )}
@@ -1070,8 +1173,12 @@ function App() {
               <Descriptions.Item label="审核来源">{auditSourceLabels[detailSeed.auditSource]}</Descriptions.Item>
               <Descriptions.Item label="当前状态">{seedStatusLabels[detailSeed.seedStatus]}</Descriptions.Item>
               <Descriptions.Item label="CCR">{Math.round(detailSeed.ccr * 100)}%</Descriptions.Item>
-              <Descriptions.Item label="模型结论">{renderModelConclusion(detailSeed.modelResult?.conclusion)}</Descriptions.Item>
-              <Descriptions.Item label="模型原因" span={2}>{detailSeed.modelResult?.reason || '-'}</Descriptions.Item>
+              {showSeedModelResult && (
+                <>
+                  <Descriptions.Item label="模型结论">{renderModelConclusion(detailSeed.modelResult?.conclusion)}</Descriptions.Item>
+                  <Descriptions.Item label="模型原因" span={2}>{detailSeed.modelResult?.reason || '-'}</Descriptions.Item>
+                </>
+              )}
             </Descriptions>
             <Button
               type="primary"
