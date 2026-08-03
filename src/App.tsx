@@ -17,6 +17,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Upload,
   message,
 } from 'antd';
@@ -50,7 +51,7 @@ import * as MockData from './mockData.ts';
 import './App.css';
 
 type NavKey = 'createTask' | 'taskCenter';
-type ValidConclusion = 'suggest_clear' | 'suggest_keep';
+type ValidConclusion = 'suggest_clear' | 'suggest_keep' | 'execution_failed';
 type TagOption = {
   id: string;
   name: string;
@@ -59,8 +60,9 @@ type TagOption = {
 type TaskFilters = {
   sceneType?: SceneType;
   taskId?: string;
+  submitter?: string;
   market?: string[];
-  objectType?: string[];
+  seedType?: string[];
   taskStatus?: TaskStatus;
   createdStart?: string;
   createdEnd?: string;
@@ -131,11 +133,12 @@ function parseObjectIdsFromText(text: string): string[] {
 }
 
 function generateMockModelResult() {
-  const conclusions: ValidConclusion[] = ['suggest_clear', 'suggest_keep'];
+  const conclusions: ValidConclusion[] = ['suggest_clear', 'suggest_keep', 'execution_failed'];
   const conclusion = conclusions[Math.floor(Math.random() * conclusions.length)];
   const hitTags: Record<ValidConclusion, string[]> = {
     suggest_clear: ['policy_relax_appeal_pass', 'risk_level_decreased', 'compliance_requirement_removed'],
     suggest_keep: ['critical_risk_confirmed', 'risk_level_increased', 'new_policy_violation'],
+    execution_failed: ['model_execution_failed'],
   };
   const reasons: Record<ValidConclusion, string[]> = {
     suggest_clear: [
@@ -148,7 +151,18 @@ function generateMockModelResult() {
       '风险特征稳定命中，建议继续作为机审种子。',
       '策略收严后仍符合风险定义，建议保留结果。',
     ],
+    execution_failed: ['模型服务执行失败，未能返回有效结论。'],
   };
+
+  if (conclusion === 'execution_failed') {
+    return {
+      conclusion,
+      confidence: 0,
+      hitTag: 'model_execution_failed',
+      reason: '模型服务执行失败，未能返回有效结论。',
+      suggestClear: false,
+    };
+  }
 
   return {
     conclusion: conclusion as ModelConclusion,
@@ -181,6 +195,7 @@ function App() {
   const [filterConditions, setFilterConditions] = useState<FilterCondition>({});
   const [createdTaskId, setCreatedTaskId] = useState('');
   const [previewSeeds, setPreviewSeeds] = useState<Seed[]>([]);
+  const [hasFilteredSeeds, setHasFilteredSeeds] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [selectedTaskRowKeys, setSelectedTaskRowKeys] = useState<string[]>([]);
@@ -189,6 +204,8 @@ function App() {
   const [detailSeed, setDetailSeed] = useState<Seed | null>(null);
   const [showSeedDetail, setShowSeedDetail] = useState(false);
   const [showSeedModelResult, setShowSeedModelResult] = useState(false);
+  const [correctionConclusion, setCorrectionConclusion] = useState<'suggest_clear' | 'suggest_keep'>('suggest_keep');
+  const [correctionReason, setCorrectionReason] = useState('');
   const [executionDrawerOpen, setExecutionDrawerOpen] = useState(false);
   const [executionTaskIds, setExecutionTaskIds] = useState<string[]>([]);
   const [executionConfig, setExecutionConfig] = useState<ExecutionConfig>({
@@ -277,13 +294,14 @@ function App() {
       .filter((task) => {
         if (appliedTaskFilters.sceneType && task.sceneType !== appliedTaskFilters.sceneType) return false;
         if (appliedTaskFilters.taskId && !task.id.includes(appliedTaskFilters.taskId.trim())) return false;
+        if (appliedTaskFilters.submitter && !getTaskSubmitter(task).includes(appliedTaskFilters.submitter.trim())) return false;
         if (appliedTaskFilters.market?.length) {
           const markets = (task.filterConditions.country || []) as string[];
           if (!markets.some((market: string) => appliedTaskFilters.market?.includes(market))) return false;
         }
-        if (appliedTaskFilters.objectType?.length) {
-          const objectTypes = (task.filterConditions.objectType || []) as string[];
-          if (!objectTypes.some((type: string) => appliedTaskFilters.objectType?.includes(type))) return false;
+        if (appliedTaskFilters.seedType?.length) {
+          const seedTypes = (task.filterConditions.seedType || []) as string[];
+          if (!seedTypes.some((type: string) => appliedTaskFilters.seedType?.includes(type))) return false;
         }
         if (appliedTaskFilters.taskStatus && task.status !== appliedTaskFilters.taskStatus) return false;
         if (appliedTaskFilters.createdStart && task.createdAt < appliedTaskFilters.createdStart) return false;
@@ -303,6 +321,14 @@ function App() {
     [executionTaskIds, tasks],
   );
 
+  const selectedTasks = useMemo(
+    () => tasks.filter((task) => selectedTaskRowKeys.includes(task.id)),
+    [selectedTaskRowKeys, tasks],
+  );
+
+  const canBatchExecute = selectedTasks.length > 0 && selectedTasks.every((task) => task.status === 'pending_model' || task.status === 'model_completed');
+  const canBatchClean = selectedTasks.length > 0 && selectedTasks.every((task) => task.status === 'approval_approved');
+
   const executionSceneType = useMemo<SceneType | undefined>(() => {
     const scenes = Array.from(new Set(executionTasks.map((task) => task.sceneType)));
     return scenes.length === 1 ? scenes[0] : undefined;
@@ -316,6 +342,7 @@ function App() {
     setFilterConditions((prev: FilterCondition) => ({ ...prev, [key]: value }));
     setCreatedTaskId('');
     setPreviewSeeds([]);
+    setHasFilteredSeeds(false);
     setCurrentPage(1);
   };
 
@@ -335,6 +362,7 @@ function App() {
     });
     setCreatedTaskId('');
     setPreviewSeeds([]);
+    setHasFilteredSeeds(false);
   };
 
   const updateCcrCondition = (index: number, field: keyof CcrCondition, value: CcrMetricType | CcrOperator | number) => {
@@ -352,6 +380,7 @@ function App() {
     });
     setCreatedTaskId('');
     setPreviewSeeds([]);
+    setHasFilteredSeeds(false);
   };
 
   const removeCcrCondition = (index: number) => {
@@ -367,6 +396,7 @@ function App() {
     });
     setCreatedTaskId('');
     setPreviewSeeds([]);
+    setHasFilteredSeeds(false);
   };
 
   const updateLogicalOperator = (operator: LogicalOperator) => {
@@ -379,6 +409,7 @@ function App() {
     });
     setCreatedTaskId('');
     setPreviewSeeds([]);
+    setHasFilteredSeeds(false);
   };
 
   const handleSceneChange = (value: SceneType) => {
@@ -388,6 +419,7 @@ function App() {
     setTaskRemark('');
     setCreatedTaskId('');
     setPreviewSeeds([]);
+    setHasFilteredSeeds(false);
   };
 
   const handleObjectIdUpload = (file: File) => {
@@ -429,6 +461,12 @@ function App() {
 
   const getTaskSubmitter = (task: Task) => task.submitter || defaultSubmitter;
 
+  const getFinalConclusion = (seed: Seed): ModelConclusion | undefined =>
+    seed.modelResult?.manualCorrection?.conclusion || seed.modelResult?.conclusion;
+
+  const getFinalReason = (seed: Seed) =>
+    seed.modelResult?.manualCorrection?.reason || seed.modelResult?.reason || '-';
+
   const isTaskFilterApplied = Object.values(appliedTaskFilters).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value));
 
   const handleSearchTasks = () => {
@@ -442,9 +480,21 @@ function App() {
     setSelectedTaskRowKeys([]);
   };
 
+  const handleFilterSeeds = () => {
+    setPreviewSeeds(filteredSeeds);
+    setHasFilteredSeeds(true);
+    setCreatedTaskId('');
+    setCurrentPage(1);
+    message.success(`筛选完成，共 ${filteredSeeds.length} 个种子，请确认后生成任务`);
+  };
+
   const handleCreateSeedTask = () => {
     if (!validateTaskMeta()) return;
-    const taskSeeds = filteredSeeds;
+    if (!hasFilteredSeeds) {
+      message.warning('请先点击“筛选种子”查看结果');
+      return;
+    }
+    const taskSeeds = previewSeeds;
     if (taskSeeds.length === 0) {
       message.warning('当前条件下没有可生成任务的种子');
       return;
@@ -471,9 +521,12 @@ function App() {
   };
 
   const openExecutionDrawer = (taskIds: string[]) => {
-    const executableIds = taskIds.filter((id) => tasks.find((task) => task.id === id)?.status === 'pending_model');
+    const executableIds = taskIds.filter((id) => {
+      const status = tasks.find((task) => task.id === id)?.status;
+      return status === 'pending_model' || status === 'model_completed';
+    });
     if (executableIds.length === 0) {
-      message.warning('请选择处于“待执行模型”的任务');
+      message.warning('请选择处于“待执行模型”或“模型执行完毕，待审批确认”的任务');
       return;
     }
     setExecutionTaskIds(executableIds);
@@ -490,27 +543,35 @@ function App() {
     if (targetTasks.length === 0) return;
 
     const now = formatDate(new Date());
+    const rerunSeedIds = new Set(targetTasks.flatMap((task) => task.seedIds || []));
+    setSeeds((prev) => prev.map((seed) => (
+      rerunSeedIds.has(seed.id)
+        ? { ...seed, executionStatus: 'executing', modelResult: undefined, updatedAt: now }
+        : seed
+    )));
     setTasks((prev) => prev.map((task) => (
       executionTaskIds.includes(task.id)
-        ? { ...task, status: 'model_executing', executionConfig: { ...executionConfig, batchName: task.name }, updatedAt: now }
+        ? { ...task, status: 'model_executing', reviewConfirmed: false, executionConfig: { ...executionConfig, batchName: task.name }, updatedAt: now }
         : task
     )));
     setExecutionDrawerOpen(false);
     message.success('模型执行已提交，Demo 将自动模拟返回结果');
 
     window.setTimeout(() => {
-      const nextStats = new Map<string, { suggestClear: number; suggestKeep: number }>();
+      const nextStats = new Map<string, { suggestClear: number; suggestKeep: number; executionFailed: number }>();
       const resultBySeedId = new Map<string, ReturnType<typeof generateMockModelResult>>();
       targetTasks.forEach((task) => {
         let suggestClear = 0;
         let suggestKeep = 0;
+        let executionFailed = 0;
         task.seedIds?.forEach((seedId: string) => {
           const result = generateMockModelResult();
           resultBySeedId.set(seedId, result);
           if (result.conclusion === 'suggest_clear') suggestClear += 1;
           if (result.conclusion === 'suggest_keep') suggestKeep += 1;
+          if (result.conclusion === 'execution_failed') executionFailed += 1;
         });
-        nextStats.set(task.id, { suggestClear, suggestKeep });
+        nextStats.set(task.id, { suggestClear, suggestKeep, executionFailed });
       });
 
       setSeeds((prev: Seed[]) => prev.map((seed: Seed) => {
@@ -525,7 +586,7 @@ function App() {
         };
         return {
           ...seed,
-          executionStatus: 'success',
+          executionStatus: modelResult.conclusion === 'execution_failed' ? 'failed' : 'success',
           executionCapability: executionConfig.capability || undefined,
           tagId: executionConfig.tagId,
           modelResult,
@@ -540,6 +601,7 @@ function App() {
         return {
           ...task,
           status: 'model_completed',
+          reviewConfirmed: false,
           updatedAt: formatDate(new Date()),
           modelResultStats: stats,
         };
@@ -552,10 +614,12 @@ function App() {
     const updatedAt = formatDate(new Date());
     setTasks((prev: Task[]) => prev.map((task: Task) => (
       taskIds.includes(task.id)
-        ? { ...task, status, updatedAt }
+        ? { ...task, status, reviewConfirmed: status === 'approval_approved' ? true : task.reviewConfirmed, updatedAt }
         : task
     )));
-    setSelectedTask((prev: Task | null) => (prev && taskIds.includes(prev.id) ? { ...prev, status, updatedAt } : prev));
+    setSelectedTask((prev: Task | null) => (prev && taskIds.includes(prev.id)
+      ? { ...prev, status, reviewConfirmed: status === 'approval_approved' ? true : prev.reviewConfirmed, updatedAt }
+      : prev));
     setSelectedTaskRowKeys([]);
     message.success(successText);
   };
@@ -566,7 +630,14 @@ function App() {
       message.warning('请选择处于“审批通过，待清理”的任务');
       return;
     }
-    const targetSeedIds = new Set(targetTasks.flatMap((task) => task.seedIds || []));
+    const targetSeedIds = new Set(
+      targetTasks
+        .flatMap((task) => task.seedIds || [])
+        .filter((seedId) => {
+          const seed = seeds.find((item) => item.id === seedId);
+          return seed ? getFinalConclusion(seed) === 'suggest_clear' : false;
+        }),
+    );
     setSeeds((prev) => prev.map((seed) => {
       if (!targetSeedIds.has(seed.id)) return seed;
       return {
@@ -586,7 +657,13 @@ function App() {
         ],
       };
     }));
-    updateTaskStatus(targetTasks.map((task) => task.id), 'disposal_completed', '已完成清理');
+    updateTaskStatus(
+      targetTasks.map((task) => task.id),
+      'disposal_completed',
+      targetSeedIds.size > 0
+        ? `已完成清理 ${targetSeedIds.size} 个建议清除种子，建议保留种子未变更`
+        : '本次没有建议清除种子，建议保留种子未变更',
+    );
   };
 
   const renderScene = (scene: SceneType) => (
@@ -601,7 +678,13 @@ function App() {
 
   const renderModelConclusion = (conclusion?: ModelConclusion) => {
     if (!conclusion) return '-';
-    const className = conclusion === 'suggest_clear' ? 'tag-suggest-clear' : conclusion === 'suggest_keep' ? 'tag-suggest-keep' : 'tag-no-result';
+    const className = conclusion === 'suggest_clear'
+      ? 'tag-suggest-clear'
+      : conclusion === 'suggest_keep'
+        ? 'tag-suggest-keep'
+        : conclusion === 'execution_failed'
+          ? 'tag-execution-failed'
+          : 'tag-no-result';
     return <Tag className={className}>{modelConclusionLabels[conclusion]}</Tag>;
   };
 
@@ -626,7 +709,39 @@ function App() {
   const openSeedDetail = (seed: Seed, showModelResult = false) => {
     setDetailSeed(seed);
     setShowSeedModelResult(showModelResult);
+    setCorrectionConclusion(seed.modelResult?.manualCorrection?.conclusion || (seed.modelResult?.conclusion === 'suggest_clear' ? 'suggest_clear' : 'suggest_keep'));
+    setCorrectionReason(seed.modelResult?.manualCorrection?.reason || '');
     setShowSeedDetail(true);
+  };
+
+  const handleManualCorrection = () => {
+    if (!detailSeed || !detailSeed.modelResult || !correctionReason.trim()) {
+      message.warning('请填写人工纠偏原因');
+      return;
+    }
+    const now = formatDate(new Date());
+    const correction = {
+      conclusion: correctionConclusion,
+      reason: correctionReason.trim(),
+      operator: '当前用户',
+      correctedAt: now,
+    };
+    setSeeds((prev) => prev.map((seed) => seed.id === detailSeed.id
+      ? {
+        ...seed,
+        modelResult: { ...seed.modelResult!, manualCorrection: correction },
+        updatedAt: now,
+        operationLogs: [...seed.operationLogs, {
+          id: generateId('log'),
+          time: now,
+          action: '人工纠偏模型结论',
+          operator: '当前用户',
+          detail: `${modelConclusionLabels[correctionConclusion]}：${correction.reason}`,
+        }],
+      }
+      : seed));
+    setDetailSeed((prev) => prev ? { ...prev, modelResult: { ...prev.modelResult!, manualCorrection: correction }, updatedAt: now } : prev);
+    message.success('人工纠偏已确认');
   };
 
   const getSeedColumns = (showModelResult = false): TableProps<Seed>['columns'] => {
@@ -641,7 +756,7 @@ function App() {
     ];
 
     if (showModelResult) {
-      columns.push({ title: '模型结论', dataIndex: 'modelResult', key: 'modelResult', width: 140, render: (value: Seed['modelResult']) => renderModelConclusion(value?.conclusion) });
+      columns.push({ title: '模型结论', dataIndex: 'modelResult', key: 'modelResult', width: 140, render: (_, record) => renderModelConclusion(getFinalConclusion(record)) });
     }
 
     columns.push({
@@ -852,20 +967,21 @@ function App() {
           )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Button onClick={() => { setFilterConditions({}); setPreviewSeeds([]); setCreatedTaskId(''); }}>重置条件</Button>
-            <Button type="primary" icon={<PlusCircleOutlined />} onClick={handleCreateSeedTask}>生成种子筛选任务</Button>
+            <Button onClick={() => { setFilterConditions({}); setPreviewSeeds([]); setHasFilteredSeeds(false); setCreatedTaskId(''); }}>重置条件</Button>
+            <Button type="primary" icon={<SearchOutlined />} onClick={handleFilterSeeds}>筛选种子</Button>
+            <Button type="primary" icon={<PlusCircleOutlined />} disabled={!hasFilteredSeeds || previewSeeds.length === 0} onClick={handleCreateSeedTask}>确认生成任务</Button>
           </div>
         </Space>
       </Card>
 
-      {createdTaskId && (
+      {hasFilteredSeeds && (
         <Card>
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Alert
-              type="success"
+              type={createdTaskId ? 'success' : 'info'}
               showIcon
-              message={`任务已创建：${createdTaskId}`}
-              description="任务发起不需要审批，已进入任务中心的“待执行模型”节点。"
+              message={createdTaskId ? `任务已创建：${createdTaskId}` : '筛选结果预览'}
+              description={createdTaskId ? '任务已进入任务中心的“待执行模型”节点。' : '请确认筛选结果后点击“确认生成任务”，当前仅为预览，不会创建任务。'}
             />
             <div>
               <span style={{ color: '#64748b' }}>筛选种子数量：</span>
@@ -909,15 +1025,19 @@ function App() {
             <Input value={taskFilters.taskId} onChange={(event) => setTaskFilters((prev: TaskFilters) => ({ ...prev, taskId: event.target.value }))} placeholder="输入 Task ID" />
           </Col>
           <Col span={6}>
+            <label>创建人</label>
+            <Input value={taskFilters.submitter} onChange={(event) => setTaskFilters((prev: TaskFilters) => ({ ...prev, submitter: event.target.value }))} placeholder="输入创建人" />
+          </Col>
+          <Col span={6}>
             <label>市场</label>
             <Select mode="multiple" style={{ width: '100%' }} value={taskFilters.market} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, market: value as string[] }))}>
               {(Object.entries(countryLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
             </Select>
           </Col>
           <Col span={6}>
-            <label>Object Type</label>
-            <Select mode="multiple" style={{ width: '100%' }} value={taskFilters.objectType} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, objectType: value as string[] }))}>
-              {(Object.entries(objectTypeLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
+            <label>种子类型</label>
+            <Select mode="multiple" style={{ width: '100%' }} value={taskFilters.seedType} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, seedType: value as string[] }))}>
+              {(Object.entries(seedTypeLabels) as Array<[string, string]>).map(([value, label]) => <Select.Option key={value} value={value}>{label}</Select.Option>)}
             </Select>
           </Col>
           <Col span={6}>
@@ -951,8 +1071,16 @@ function App() {
           title={(
             <Space>
               <span>任务列表</span>
-              <Button icon={<PlayCircleOutlined />} onClick={() => openExecutionDrawer(selectedTaskRowKeys)}>批量执行模型</Button>
-              <Button icon={<DeleteOutlined />} onClick={() => handleCleanTasks(selectedTaskRowKeys)}>批量清理种子</Button>
+              <Tooltip title="仅对待执行模型或模型执行完毕节点任务适用，可对整个 Task 重新过模型">
+                <span>
+                  <Button disabled={!canBatchExecute} icon={<PlayCircleOutlined />} onClick={() => openExecutionDrawer(selectedTaskRowKeys)}>批量执行/重新过模型</Button>
+                </span>
+              </Tooltip>
+              <Tooltip title="仅对审批通过，待清理节点任务适用">
+                <span>
+                  <Button disabled={!canBatchClean} icon={<DeleteOutlined />} onClick={() => handleCleanTasks(selectedTaskRowKeys)}>批量清理种子</Button>
+                </span>
+              </Tooltip>
             </Space>
           )}
         >
@@ -986,7 +1114,7 @@ function App() {
                 key: 'modelStats',
                 width: 190,
                 render: (_, record: Task) => record.modelResultStats
-                  ? <span>建议清除 {record.modelResultStats.suggestClear} / 建议保留 {record.modelResultStats.suggestKeep}</span>
+                  ? <span>清除 {record.modelResultStats.suggestClear} / 保留 {record.modelResultStats.suggestKeep} / 失败 {record.modelResultStats.executionFailed}</span>
                   : <span style={{ color: '#86868b' }}>未执行</span>,
               },
               {
@@ -997,11 +1125,15 @@ function App() {
                 render: (_, record: Task) => (
                   <Space wrap>
                     <Button size="small" onClick={() => { setSelectedTask(record); setShowTaskDetail(true); }}>详情</Button>
-                    {record.status === 'pending_model' && <Button size="small" type="primary" onClick={() => openExecutionDrawer([record.id])}>执行模型</Button>}
+                    {(record.status === 'pending_model' || record.status === 'model_completed') && (
+                      <Button size="small" type="primary" onClick={() => openExecutionDrawer([record.id])}>
+                        {record.status === 'model_completed' ? '重新过模型' : '执行模型'}
+                      </Button>
+                    )}
                     {record.status === 'model_completed' && (
                       <>
-                        <Button size="small" type="primary" icon={<CheckCircleOutlined />} onClick={() => updateTaskStatus([record.id], 'approval_approved', '审批已通过，任务进入待清理')}>
-                          审批通过
+                        <Button size="small" type="primary" icon={<CheckCircleOutlined />} onClick={() => updateTaskStatus([record.id], 'approval_approved', '已确认结果并进入审批通过，待清理')}>
+                          确认结果
                         </Button>
                         <Button size="small" danger onClick={() => updateTaskStatus([record.id], 'approval_rejected', '审批已拒绝，任务终止')}>拒绝</Button>
                       </>
@@ -1017,8 +1149,8 @@ function App() {
     );
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Layout.Sider width={260} theme="light">
+    <Layout className="app-layout" style={{ minHeight: '100vh' }}>
+      <Layout.Sider className="app-sider" width={260} theme="light">
         <div style={{ padding: '24px 20px 16px' }}>
           <div className="page-title">结果库批量处理工作台</div>
           <div style={{ color: '#6e6e73', fontSize: 13, marginTop: 8 }}>
@@ -1063,10 +1195,10 @@ function App() {
                   {[
                     ['1', '选择场景', '先判断本次策略变化是政策放宽还是政策收严。放宽通常关注历史拒绝结果是否需要移除；收严通常关注高风险 CCR 种子是否需要置为无效。'],
                     ['2', '配置筛选条件', '按市场、Object Type、种子状态等条件圈定范围。收严场景支持 P0/P1 及二级 CCR 区间平铺输入，放宽场景支持审核来源、Policy、Provision。'],
-                    ['3', '生成 Task ID', '点击生成种子筛选任务后形成一条任务记录。任务发起不需要审批，并立即进入任务中心的“待执行模型”节点。'],
-                    ['4', '预览种子与详情', '生成任务后展示种子列表，可预览图片、视频、文本和 Link，并可打开右侧详情查看 Object 信息、模型结果和 BI Troubleshooting 跳转。'],
-                    ['5', '执行模型', '在任务中心勾选单个或多个“待执行模型”任务，打开抽屉选择 Hermes / Workflow 和 Tag ID，提交后进入“模型执行中”。'],
-                    ['6', '审批确认与清理', '模型返回后进入“模型执行完毕，待审批确认”。审批通过后进入“审批通过，待清理”，可触发清理并将种子置为无效；审批拒绝则任务终止。'],
+                    ['3', '确认生成任务', '点击“筛选种子”只查看预览结果，确认范围后点击“确认生成任务”，任务才会进入任务中心的“待执行模型”节点。'],
+                    ['4', '执行模型与重跑', '在任务中心选择任务执行 Hermes / Workflow。若整体结果分布不理想，可对整个 Task 重新过模型，重跑后默认只保留最新一轮结果。'],
+                    ['5', '人工纠偏', '运营可打开单个种子详情，修改最终结论并填写纠偏原因，点击确认后保存人工纠偏结果。'],
+                    ['6', '审批确认与清理', '确认 Task 结果后发起审批。审批通过后进入待清理节点，最终只将建议清除的种子置为无效；建议保留和执行失败种子不清理。'],
                   ].map(([step, title, desc]) => (
                     <Col span={12} key={step}>
                       <div className="guide-step-card">
@@ -1144,10 +1276,14 @@ function App() {
               <Descriptions.Item label="备注" span={2}>{selectedTask.remark || '-'}</Descriptions.Item>
               <Descriptions.Item label="筛选摘要" span={2}>{taskFilterSummary(selectedTask)}</Descriptions.Item>
             </Descriptions>
-            {selectedTask.status === 'pending_model' && <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => openExecutionDrawer([selectedTask.id])}>执行模型</Button>}
+            {(selectedTask.status === 'pending_model' || selectedTask.status === 'model_completed') && (
+              <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => openExecutionDrawer([selectedTask.id])}>
+                {selectedTask.status === 'model_completed' ? '重新过模型' : '执行模型'}
+              </Button>
+            )}
             {selectedTask.status === 'model_completed' && (
               <Space>
-                <Button type="primary" onClick={() => updateTaskStatus([selectedTask.id], 'approval_approved', '审批已通过，任务进入待清理')}>审批通过</Button>
+                <Button type="primary" onClick={() => updateTaskStatus([selectedTask.id], 'approval_approved', '已确认结果并进入审批通过，待清理')}>确认结果并发起审批</Button>
                 <Button danger onClick={() => updateTaskStatus([selectedTask.id], 'approval_rejected', '审批已拒绝，任务终止')}>审批拒绝</Button>
               </Space>
             )}
@@ -1175,11 +1311,39 @@ function App() {
               <Descriptions.Item label="CCR">{Math.round(detailSeed.ccr * 100)}%</Descriptions.Item>
               {showSeedModelResult && (
                 <>
-                  <Descriptions.Item label="模型结论">{renderModelConclusion(detailSeed.modelResult?.conclusion)}</Descriptions.Item>
-                  <Descriptions.Item label="模型原因" span={2}>{detailSeed.modelResult?.reason || '-'}</Descriptions.Item>
+                  <Descriptions.Item label="模型原始结论">{renderModelConclusion(detailSeed.modelResult?.conclusion)}</Descriptions.Item>
+                  <Descriptions.Item label="当前最终结论">{renderModelConclusion(getFinalConclusion(detailSeed))}</Descriptions.Item>
+                  <Descriptions.Item label="当前原因" span={2}>{getFinalReason(detailSeed)}</Descriptions.Item>
                 </>
               )}
             </Descriptions>
+            {showSeedModelResult && detailSeed.modelResult && (
+              <Card size="small" title="人工纠偏">
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                  <div>
+                    <label>纠偏结论</label>
+                    <Select
+                      style={{ width: '100%' }}
+                      value={correctionConclusion}
+                      onChange={(value) => setCorrectionConclusion(value as 'suggest_clear' | 'suggest_keep')}
+                    >
+                      <Select.Option value="suggest_clear">建议清除</Select.Option>
+                      <Select.Option value="suggest_keep">建议保留</Select.Option>
+                    </Select>
+                  </div>
+                  <div>
+                    <label>纠偏原因</label>
+                    <Input.TextArea
+                      value={correctionReason}
+                      onChange={(event) => setCorrectionReason(event.target.value)}
+                      rows={3}
+                      placeholder="请输入人工纠偏原因"
+                    />
+                  </div>
+                  <Button type="primary" onClick={handleManualCorrection}>确认人工纠偏</Button>
+                </Space>
+              </Card>
+            )}
             <Button
               type="primary"
               href={`https://bi.bytedance.net/troubleshooting?object_id=${detailSeed.objectId}`}

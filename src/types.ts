@@ -29,7 +29,7 @@ export type SeedStatus = 'active' | 'cleared';
 
 export type ExecutionStatus = 'not_executed' | 'executing' | 'success' | 'failed';
 
-export type ModelConclusion = 'suggest_clear' | 'suggest_keep' | 'no_result';
+export type ModelConclusion = 'suggest_clear' | 'suggest_keep' | 'execution_failed' | 'no_result';
 
 export type ExecutionCapability = 'hermes' | 'workflow';
 
@@ -93,7 +93,9 @@ export interface Task {
   modelResultStats?: {
     suggestClear: number;
     suggestKeep: number;
+    executionFailed: number;
   };
+  reviewConfirmed?: boolean;
 }
 
 export interface SecondaryCCR {
@@ -164,6 +166,12 @@ export interface ModelResult {
   hitTag: string;
   reason: string;
   suggestClear: boolean;
+  manualCorrection?: {
+    conclusion: 'suggest_clear' | 'suggest_keep';
+    reason: string;
+    operator: string;
+    correctedAt: string;
+  };
 }
 
 export interface OperationLog {

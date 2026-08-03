@@ -425,6 +425,7 @@ export const executionStatusLabels: Record<string, string> = {
 export const modelConclusionLabels: Record<string, string> = {
   suggest_clear: '建议清除',
   suggest_keep: '建议保留',
+  execution_failed: '模型执行失败',
   no_result: '未出结果',
 };
 
@@ -527,7 +528,7 @@ export const mockTasks: Task[] = [
       approvedBy: '运营 Leader',
       approvedAt: '2026-07-01 11:00:00',
     },
-    modelResultStats: { suggestClear: 30, suggestKeep: 20 },
+    modelResultStats: { suggestClear: 30, suggestKeep: 20, executionFailed: 0 },
   },
   {
     id: 'task_002',
@@ -553,7 +554,7 @@ export const mockTasks: Task[] = [
       approvedBy: '运营 Leader',
       approvedAt: '2026-07-02 10:00:00',
     },
-    modelResultStats: { suggestClear: 20, suggestKeep: 60 },
+    modelResultStats: { suggestClear: 20, suggestKeep: 60, executionFailed: 0 },
   },
   {
     id: 'task_003',
@@ -636,7 +637,7 @@ export const mockTasks: Task[] = [
       approvedBy: '运营 Leader',
       approvedAt: '2026-07-02 12:00:00',
     },
-    modelResultStats: { suggestClear: 15, suggestKeep: 45 },
+    modelResultStats: { suggestClear: 15, suggestKeep: 45, executionFailed: 0 },
   },
   {
     id: 'task_007',
