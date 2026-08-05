@@ -352,6 +352,7 @@ function App() {
   const availableTags = executionConfig.capability === 'workflow'
     ? (workflowTags as TagOption[]).filter((item: TagOption) => item.scene === 'both' || item.scene === executionSceneType)
     : (hermesTags as TagOption[]).filter((item: TagOption) => item.scene === 'both' || item.scene === executionSceneType);
+  const canChooseRerunMode = executionTasks.length > 0 && executionTasks.every((task) => task.status !== 'pending_model');
 
   const updateFilter = <K extends keyof FilterCondition>(key: K, value: FilterCondition[K]) => {
     setFilterConditions((prev: FilterCondition) => ({ ...prev, [key]: value }));
@@ -558,16 +559,18 @@ function App() {
     if (targetTasks.length === 0) return;
 
     const now = formatDate(new Date());
+    const isInitialExecution = targetTasks.every((task) => task.status === 'pending_model');
+    const rerunMode = isInitialExecution ? 'all' : executionConfig.rerunMode;
     const targetSeedIds = targetTasks.flatMap((task) => task.seedIds || []);
     const rerunSeedIds = new Set(
       targetSeedIds.filter((seedId) => {
-        if (executionConfig.rerunMode === 'all') return true;
+        if (rerunMode === 'all') return true;
         const seed = seeds.find((item) => item.id === seedId);
         return seed?.modelResult?.conclusion === 'execution_failed';
       }),
     );
     if (rerunSeedIds.size === 0) {
-      message.info(executionConfig.rerunMode === 'failed' ? '当前选中的 Task 没有模型执行失败的种子' : '当前没有可执行的种子');
+      message.info(rerunMode === 'failed' ? '当前选中的 Task 没有模型执行失败的种子' : '当前没有可执行的种子');
       return;
     }
     setSeeds((prev) => prev.map((seed) => (
@@ -639,7 +642,7 @@ function App() {
           modelResultStats: stats,
         };
       }));
-      message.success(executionConfig.rerunMode === 'failed' ? '失败种子已批量重新过模型，任务结果已更新' : '模型执行完毕，任务结果已更新');
+      message.success(rerunMode === 'failed' ? '失败种子已批量重新过模型，任务结果已更新' : '模型执行完毕，任务结果已更新');
     }, 1200);
   };
 
@@ -777,16 +780,18 @@ function App() {
     message.success('人工纠偏已确认');
   };
 
-  const getSeedColumns = (showModelResult = false): TableProps<Seed>['columns'] => {
+  const getSeedColumns = (showModelResult = false, showIndustry = true): TableProps<Seed>['columns'] => {
     const columns: TableProps<Seed>['columns'] = [
       { title: '预览', key: 'preview', width: 110, render: (_, record) => renderSeedPreview(record) },
       { title: 'Object ID', dataIndex: 'objectId', key: 'objectId', width: 180, fixed: 'left' },
       { title: '审核阶段', dataIndex: 'auditSource', key: 'auditSource', width: 120, render: (value: Seed['auditSource']) => auditSourceLabels[value] },
       { title: 'Object Type', dataIndex: 'objectType', key: 'objectType', width: 120, render: (value: Seed['objectType']) => objectTypeLabels[value] },
       { title: '市场', dataIndex: 'country', key: 'country', width: 100, render: (value: Seed['country']) => countryLabels[value] },
-      { title: '行业', dataIndex: 'industry', key: 'industry', width: 100, render: (value: Seed['industry']) => industryLabels[value] },
-      { title: '种子状态', dataIndex: 'seedStatus', key: 'seedStatus', width: 120, render: (value: Seed['seedStatus']) => seedStatusLabels[value] },
     ];
+    if (showIndustry) {
+      columns.push({ title: '行业', dataIndex: 'industry', key: 'industry', width: 100, render: (value: Seed['industry']) => industryLabels[value] });
+    }
+    columns.push({ title: '种子状态', dataIndex: 'seedStatus', key: 'seedStatus', width: 120, render: (value: Seed['seedStatus']) => seedStatusLabels[value] });
 
     if (showModelResult) {
       columns.push({
@@ -1045,7 +1050,7 @@ function App() {
             <Table
               rowKey="id"
               dataSource={paginatedPreviewSeeds}
-              columns={getSeedColumns(false)}
+              columns={getSeedColumns(false, sceneType !== 'relax')}
               scroll={{ x: 1200 }}
               pagination={{ current: currentPage, pageSize, total: previewSeeds.length, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
               onChange={(pagination) => { setCurrentPage(pagination.current || 1); setPageSize(pagination.pageSize || 10); }}
@@ -1117,7 +1122,7 @@ function App() {
               <label>创建时间结束</label>
               <Input type="date" value={taskFilters.createdEnd} onChange={(event) => setTaskFilters((prev: TaskFilters) => ({ ...prev, createdEnd: event.target.value }))} />
             </Col>
-            <Col span={12} style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', gap: 8 }}>
+            <Col span={12} className="task-search-actions" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-start', gap: 8 }}>
               <Button type="primary" icon={<SearchOutlined />} onClick={handleSearchTasks}>搜索</Button>
               <Button onClick={handleResetTaskFilters}>重置</Button>
             </Col>
@@ -1313,6 +1318,7 @@ function App() {
               {availableTags.map((item) => <Select.Option key={item.id} value={item.id}>{item.name}</Select.Option>)}
             </Select>
           </div>
+          {canChooseRerunMode && (
           <div>
             <label>重新过模型范围</label>
             <Select
@@ -1325,6 +1331,7 @@ function App() {
             </Select>
             <div className="field-hint">失败重跑不会修改建议保留、建议清除或已人工纠偏的种子。</div>
           </div>
+          )}
           <div>
             <label>执行说明</label>
             <Input.TextArea
@@ -1335,7 +1342,7 @@ function App() {
             />
           </div>
           <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRunModel}>
-            {executionConfig.rerunMode === 'failed' ? '提交失败种子重跑' : '提交全量执行'}
+            {!canChooseRerunMode || executionConfig.rerunMode === 'all' ? '提交全量执行' : '提交失败种子重跑'}
           </Button>
         </Space>
       </Drawer>
@@ -1401,7 +1408,7 @@ function App() {
                 </Space>
               )}
             >
-              <Table rowKey="id" dataSource={detailTaskSeeds} columns={getSeedColumns(selectedTask.status !== 'pending_model')} scroll={{ x: 1400 }} pagination={{ pageSize: 5 }} />
+              <Table rowKey="id" dataSource={detailTaskSeeds} columns={getSeedColumns(selectedTask.status !== 'pending_model', selectedTask.sceneType !== 'relax')} scroll={{ x: 1400 }} pagination={{ pageSize: 5 }} />
             </Card>
           </Space>
         )}
