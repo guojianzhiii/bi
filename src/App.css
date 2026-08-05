@@ -55,7 +55,27 @@
 }
 
 .app-layout .ant-input-textarea textarea {
-  font-size: 14px;
+  font-size: 12px;
+}
+
+.app-layout .ant-input,
+.app-layout .ant-input-affix-wrapper input,
+.app-layout .ant-input-textarea textarea,
+.app-layout .ant-select-selection-item,
+.app-layout .ant-select-selection-placeholder,
+.app-layout .ant-select-item-option-content,
+.app-layout .ant-segmented-item-label {
+  font-size: 12px !important;
+}
+
+.app-layout .ant-select-single .ant-select-selector {
+  height: 32px;
+  padding: 0 10px;
+}
+
+.app-layout .ant-select-single .ant-select-selection-item,
+.app-layout .ant-select-single .ant-select-selection-placeholder {
+  line-height: 30px;
 }
 
 .object-id-input textarea {
@@ -98,7 +118,7 @@
 }
 
 .stat-card {
-  height: 88px;
+  height: 96px;
   padding: 16px !important;
 }
 
@@ -501,8 +521,43 @@
 }
 
 .app-layout .stat-card {
-  height: 88px;
+  height: 96px;
   padding: 16px !important;
+}
+
+.task-center-stats {
+  align-items: stretch;
+}
+
+.task-center-stats > .ant-col {
+  display: flex;
+}
+
+.task-center-stats .stat-card {
+  width: 100%;
+}
+
+.task-center-stats .ant-statistic-title {
+  white-space: normal;
+  overflow: visible;
+}
+
+.ccr-section-title {
+  margin-bottom: 12px;
+  color: #121212;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.ccr-condition-row .ant-row {
+  align-items: center;
+}
+
+.ccr-condition-row .ant-select,
+.ccr-condition-row .ant-input-number,
+.ccr-condition-row .ant-input {
+  width: 100%;
 }
 
 .app-layout .guide-step-card {

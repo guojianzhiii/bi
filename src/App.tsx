@@ -956,7 +956,7 @@ function App() {
 
           {sceneType === 'tighten' && (
             <div>
-              <div style={{ fontWeight: 700, color: '#1d1d1f', marginBottom: 12 }}>CCR 自定义条件</div>
+              <div className="ccr-section-title">CCR 自定义条件</div>
               <div style={{ marginBottom: 12 }}>
                 <Button type="dashed" icon={<PlusCircleOutlined />} onClick={addCcrCondition}>
                   添加条件
@@ -1058,7 +1058,7 @@ function App() {
 
   const taskCenterContent = (
     <Space direction="vertical" size={24} style={{ width: '100%' }}>
-      <Row gutter={16}>
+      <Row className="task-center-stats" gutter={16}>
         <Col span={4}><Card className="stat-card"><Statistic title="任务总数" value={taskStats.total} /></Card></Col>
         <Col span={4}><Card className="stat-card"><Statistic title="待执行模型" value={taskStats.pendingModel} /></Card></Col>
         <Col span={4}><Card className="stat-card"><Statistic title="模型执行中" value={taskStats.running} /></Card></Col>
