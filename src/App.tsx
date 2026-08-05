@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
@@ -218,6 +218,11 @@ function App() {
   });
   const [taskFilters, setTaskFilters] = useState<TaskFilters>({});
   const [appliedTaskFilters, setAppliedTaskFilters] = useState<TaskFilters>({});
+  const [detailModelConclusionFilter, setDetailModelConclusionFilter] = useState<ModelConclusion[] | undefined>(undefined);
+
+  useEffect(() => {
+    setDetailModelConclusionFilter(undefined);
+  }, [selectedTask?.id]);
 
   function normalizeTaskStatus(status: TaskStatus): TaskStatus {
     if (status === 'draft' || status === 'pending_approval') return 'pending_model';
@@ -315,8 +320,15 @@ function App() {
 
   const detailTaskSeeds = useMemo(() => {
     if (!selectedTask) return [];
-    return seeds.filter((seed) => selectedTask.seedIds?.includes(seed.id));
-  }, [seeds, selectedTask]);
+    return seeds
+      .filter((seed) => selectedTask.seedIds?.includes(seed.id))
+      .filter((seed) => {
+        if (!detailModelConclusionFilter?.length) return true;
+        const raw = seed.modelResult?.conclusion;
+        if (!raw) return false;
+        return detailModelConclusionFilter.includes(raw);
+      });
+  }, [seeds, selectedTask, detailModelConclusionFilter]);
 
   const executionTasks = useMemo(
     () => tasks.filter((task) => executionTaskIds.includes(task.id)),
@@ -749,8 +761,8 @@ function App() {
   const getSeedColumns = (showModelResult = false): TableProps<Seed>['columns'] => {
     const columns: TableProps<Seed>['columns'] = [
       { title: '预览', key: 'preview', width: 110, render: (_, record) => renderSeedPreview(record) },
-      { title: '种子 ID', dataIndex: 'id', key: 'id', width: 150 },
-      { title: 'Object ID', dataIndex: 'objectId', key: 'objectId', width: 180 },
+      { title: 'Object ID', dataIndex: 'objectId', key: 'objectId', width: 180, fixed: 'left' },
+      { title: '审核阶段', dataIndex: 'auditSource', key: 'auditSource', width: 120, render: (value: Seed['auditSource']) => auditSourceLabels[value] },
       { title: 'Object Type', dataIndex: 'objectType', key: 'objectType', width: 120, render: (value: Seed['objectType']) => objectTypeLabels[value] },
       { title: '市场', dataIndex: 'country', key: 'country', width: 100, render: (value: Seed['country']) => countryLabels[value] },
       { title: '行业', dataIndex: 'industry', key: 'industry', width: 100, render: (value: Seed['industry']) => industryLabels[value] },
@@ -758,7 +770,28 @@ function App() {
     ];
 
     if (showModelResult) {
-      columns.push({ title: '模型结论', dataIndex: 'modelResult', key: 'modelResult', width: 140, render: (_, record) => renderModelConclusion(getFinalConclusion(record)) });
+      columns.push({
+        title: '模型结论',
+        dataIndex: ['modelResult', 'conclusion'],
+        key: 'modelResult',
+        width: 140,
+        render: (_, record: Seed) => renderModelConclusion(record.modelResult?.conclusion),
+      });
+      columns.push({
+        title: '人工纠偏结果',
+        key: 'manualCorrectionResult',
+        width: 160,
+        render: (_, record: Seed) => {
+          const correction = record.modelResult?.manualCorrection;
+          if (!correction) return <span style={{ color: '#86868b' }}>未纠偏</span>;
+          return (
+            <Space direction="vertical" size={2}>
+              {renderModelConclusion(correction.conclusion)}
+              <span style={{ color: '#6e6e73', fontSize: 12 }}>{correction.reason}</span>
+            </Space>
+          );
+        },
+      });
     }
 
     columns.push({
@@ -1010,8 +1043,8 @@ function App() {
         <Col span={4}><Card className="stat-card"><Statistic title="待执行模型" value={taskStats.pendingModel} /></Card></Col>
         <Col span={4}><Card className="stat-card"><Statistic title="模型执行中" value={taskStats.running} /></Card></Col>
         <Col span={4}><Card className="stat-card"><Statistic title="模型执行完毕" value={taskStats.modelDone} /></Card></Col>
-        <Col span={4}><Card className="stat-card"><Statistic title="纠偏已确认" value={taskStats.reviewConfirmed} /></Card></Col>
-        <Col span={4}><Card className="stat-card"><Statistic title="待清理" value={taskStats.pendingClean} /></Card></Col>
+        <Col span={4}><Card className="stat-card"><Statistic title="发起清理审批，审批中" value={taskStats.reviewConfirmed} /></Card></Col>
+        <Col span={4}><Card className="stat-card"><Statistic title="审批通过，待清理" value={taskStats.pendingClean} /></Card></Col>
       </Row>
 
       <Card title="查找任务">
@@ -1049,7 +1082,7 @@ function App() {
               <Select.Option value="pending_model">待执行模型</Select.Option>
               <Select.Option value="model_executing">模型执行中</Select.Option>
               <Select.Option value="model_completed">模型执行完毕</Select.Option>
-              <Select.Option value="review_confirmed">人工纠偏已确认，待发起审批</Select.Option>
+              <Select.Option value="review_confirmed">发起清理审批，审批中</Select.Option>
               <Select.Option value="approval_approved">审批通过，待清理</Select.Option>
               <Select.Option value="approval_rejected">审批拒绝，终止</Select.Option>
               <Select.Option value="disposal_completed">处置完毕</Select.Option>
@@ -1307,8 +1340,34 @@ function App() {
               </Space>
             )}
             {selectedTask.status === 'approval_approved' && <Button type="primary" icon={<DeleteOutlined />} onClick={() => handleCleanTasks([selectedTask.id])}>清理种子</Button>}
-            <Card size="small" title="任务种子">
-              <Table rowKey="id" dataSource={detailTaskSeeds} columns={getSeedColumns(selectedTask.status !== 'pending_model')} scroll={{ x: 1200 }} pagination={{ pageSize: 5 }} />
+            <Card
+              size="small"
+              title={(
+                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <span>任务种子（Object ID 为主键）</span>
+                  {selectedTask.status !== 'pending_model' && (
+                    <Space>
+                      <span style={{ color: '#6e6e73', fontSize: 12 }}>按模型结论筛选：</span>
+                      <Select
+                        mode="multiple"
+                        allowClear
+                        style={{ minWidth: 320 }}
+                        placeholder="可多选：建议清除 / 建议保留 / 模型执行失败"
+                        value={detailModelConclusionFilter}
+                        onChange={(value) => setDetailModelConclusionFilter(value.length ? value as ModelConclusion[] : undefined)}
+                        options={[
+                          { label: '建议清除', value: 'suggest_clear' },
+                          { label: '建议保留', value: 'suggest_keep' },
+                          { label: '模型执行失败', value: 'execution_failed' },
+                        ]}
+                      />
+                      <Button size="small" onClick={() => setDetailModelConclusionFilter(undefined)}>重置</Button>
+                    </Space>
+                  )}
+                </Space>
+              )}
+            >
+              <Table rowKey="id" dataSource={detailTaskSeeds} columns={getSeedColumns(selectedTask.status !== 'pending_model')} scroll={{ x: 1400 }} pagination={{ pageSize: 5 }} />
             </Card>
           </Space>
         )}
