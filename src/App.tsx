@@ -214,6 +214,7 @@ function App() {
     tagId: '',
     description: '',
     onlySelected: false,
+    rerunMode: 'all',
     batchName: '',
   });
   const [taskFilters, setTaskFilters] = useState<TaskFilters>({});
@@ -544,7 +545,7 @@ function App() {
       return;
     }
     setExecutionTaskIds(executableIds);
-    setExecutionConfig({ capability: null, tagId: '', description: '', onlySelected: false, batchName: '' });
+    setExecutionConfig({ capability: null, tagId: '', description: '', onlySelected: false, rerunMode: 'all', batchName: '' });
     setExecutionDrawerOpen(true);
   };
 
@@ -557,7 +558,18 @@ function App() {
     if (targetTasks.length === 0) return;
 
     const now = formatDate(new Date());
-    const rerunSeedIds = new Set(targetTasks.flatMap((task) => task.seedIds || []));
+    const targetSeedIds = targetTasks.flatMap((task) => task.seedIds || []);
+    const rerunSeedIds = new Set(
+      targetSeedIds.filter((seedId) => {
+        if (executionConfig.rerunMode === 'all') return true;
+        const seed = seeds.find((item) => item.id === seedId);
+        return seed?.modelResult?.conclusion === 'execution_failed';
+      }),
+    );
+    if (rerunSeedIds.size === 0) {
+      message.info(executionConfig.rerunMode === 'failed' ? '当前选中的 Task 没有模型执行失败的种子' : '当前没有可执行的种子');
+      return;
+    }
     setSeeds((prev) => prev.map((seed) => (
       rerunSeedIds.has(seed.id)
         ? { ...seed, executionStatus: 'executing', modelResult: undefined, updatedAt: now }
@@ -579,6 +591,13 @@ function App() {
         let suggestKeep = 0;
         let executionFailed = 0;
         task.seedIds?.forEach((seedId: string) => {
+          if (!rerunSeedIds.has(seedId)) {
+            const existing = seeds.find((seed) => seed.id === seedId)?.modelResult;
+            if (existing?.conclusion === 'suggest_clear') suggestClear += 1;
+            if (existing?.conclusion === 'suggest_keep') suggestKeep += 1;
+            if (existing?.conclusion === 'execution_failed') executionFailed += 1;
+            return;
+          }
           const result = generateMockModelResult();
           resultBySeedId.set(seedId, result);
           if (result.conclusion === 'suggest_clear') suggestClear += 1;
@@ -620,7 +639,7 @@ function App() {
           modelResultStats: stats,
         };
       }));
-      message.success('模型执行完毕，任务进入待审批确认');
+      message.success(executionConfig.rerunMode === 'failed' ? '失败种子已批量重新过模型，任务结果已更新' : '模型执行完毕，任务结果已更新');
     }, 1200);
   };
 
@@ -863,9 +882,10 @@ function App() {
             <Col span={8}>
               <label>Object ID</label>
               <Input.TextArea
+                className="object-id-input"
                 value={filterConditions.objectId}
                 onChange={(event) => updateFilter('objectId', event.target.value)}
-                rows={3}
+                rows={1}
                 placeholder="多个 Object ID 可用逗号、空格或换行分隔"
               />
               <Space direction="vertical" size={8} style={{ width: '100%', marginTop: 8 }}>
@@ -1268,7 +1288,7 @@ function App() {
         </Layout.Content>
       </Layout>
 
-      <Drawer title="执行模型" open={executionDrawerOpen} width={620} onClose={() => setExecutionDrawerOpen(false)}>
+      <Drawer title="执行模型" open={executionDrawerOpen} width={640} onClose={() => setExecutionDrawerOpen(false)}>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Alert type="info" showIcon message={`已选择 ${executionTaskIds.length} 个任务`} description={executionTaskIds.join(' / ')} />
           <div>
@@ -1294,6 +1314,18 @@ function App() {
             </Select>
           </div>
           <div>
+            <label>重新过模型范围</label>
+            <Select
+              style={{ width: '100%' }}
+              value={executionConfig.rerunMode}
+              onChange={(value) => setExecutionConfig((prev: ExecutionConfig) => ({ ...prev, rerunMode: value as ExecutionConfig['rerunMode'] }))}
+            >
+              <Select.Option value="all">全量重新过模型（覆盖当前 Task 全部结果）</Select.Option>
+              <Select.Option value="failed">仅模型执行失败的种子重新过模型</Select.Option>
+            </Select>
+            <div className="field-hint">失败重跑不会修改建议保留、建议清除或已人工纠偏的种子。</div>
+          </div>
+          <div>
             <label>执行说明</label>
             <Input.TextArea
               value={executionConfig.description}
@@ -1302,11 +1334,13 @@ function App() {
               placeholder="补充本次执行模型的策略、范围和注意事项"
             />
           </div>
-          <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRunModel}>提交执行</Button>
+          <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRunModel}>
+            {executionConfig.rerunMode === 'failed' ? '提交失败种子重跑' : '提交全量执行'}
+          </Button>
         </Space>
       </Drawer>
 
-      <Drawer title="任务详情" open={showTaskDetail} width={860} onClose={() => setShowTaskDetail(false)}>
+      <Drawer title="任务详情" open={showTaskDetail} width={800} onClose={() => setShowTaskDetail(false)}>
         {selectedTask && (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Descriptions bordered column={2}>
@@ -1373,7 +1407,7 @@ function App() {
         )}
       </Drawer>
 
-      <Drawer title="种子详情" open={showSeedDetail} width={720} onClose={() => setShowSeedDetail(false)}>
+      <Drawer title="种子详情" open={showSeedDetail} width={640} onClose={() => setShowSeedDetail(false)}>
         {detailSeed && (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             {renderSeedPreview(detailSeed)}

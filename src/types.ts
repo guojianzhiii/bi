@@ -216,6 +216,7 @@ export interface ExecutionConfig {
   tagId: string;
   description: string;
   onlySelected: boolean;
+  rerunMode: 'all' | 'failed';
   batchName: string;
 }
 
