@@ -547,6 +547,7 @@ function App() {
     }
     setExecutionTaskIds(executableIds);
     setExecutionConfig({ capability: null, tagId: '', description: '', onlySelected: false, rerunMode: 'all', batchName: '' });
+    setShowTaskDetail(false);
     setExecutionDrawerOpen(true);
   };
 
