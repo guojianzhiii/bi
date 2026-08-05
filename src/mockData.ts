@@ -480,7 +480,8 @@ export const workflowTags = [
 export const taskStatusLabels: Record<string, string> = {
   pending_model: '待执行模型',
   model_executing: '模型执行中',
-  model_completed: '模型执行完毕，待审批确认',
+  model_completed: '模型执行完毕',
+  review_confirmed: '人工纠偏已确认，待发起审批',
   approval_approved: '审批通过，待清理',
   approval_rejected: '审批拒绝，终止',
   disposal_completed: '处置完毕',
@@ -494,6 +495,7 @@ export const taskStatusColors: Record<string, string> = {
   pending_model: 'blue',
   model_executing: 'processing',
   model_completed: 'purple',
+  review_confirmed: 'geekblue',
   approval_approved: 'green',
   approval_rejected: 'red',
   disposal_completed: 'green',

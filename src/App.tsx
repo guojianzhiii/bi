@@ -104,6 +104,7 @@ const statusColorMap: Record<TaskStatus, string> = {
   pending_model: 'blue',
   model_executing: 'processing',
   model_completed: 'purple',
+  review_confirmed: 'geekblue',
   approval_approved: 'green',
   approval_rejected: 'red',
   disposal_completed: 'green',
@@ -285,7 +286,8 @@ function App() {
     total: tasks.length,
     pendingModel: tasks.filter((task) => task.status === 'pending_model').length,
     running: tasks.filter((task) => task.status === 'model_executing').length,
-    pendingApproval: tasks.filter((task) => task.status === 'model_completed').length,
+    modelDone: tasks.filter((task) => task.status === 'model_completed').length,
+    reviewConfirmed: tasks.filter((task) => task.status === 'review_confirmed').length,
     pendingClean: tasks.filter((task) => task.status === 'approval_approved').length,
   }), [tasks]);
 
@@ -326,7 +328,7 @@ function App() {
     [selectedTaskRowKeys, tasks],
   );
 
-  const canBatchExecute = selectedTasks.length > 0 && selectedTasks.every((task) => task.status === 'pending_model' || task.status === 'model_completed');
+  const canBatchExecute = selectedTasks.length > 0 && selectedTasks.every((task) => task.status === 'pending_model' || task.status === 'model_completed' || task.status === 'review_confirmed');
   const canBatchClean = selectedTasks.length > 0 && selectedTasks.every((task) => task.status === 'approval_approved');
 
   const executionSceneType = useMemo<SceneType | undefined>(() => {
@@ -523,10 +525,10 @@ function App() {
   const openExecutionDrawer = (taskIds: string[]) => {
     const executableIds = taskIds.filter((id) => {
       const status = tasks.find((task) => task.id === id)?.status;
-      return status === 'pending_model' || status === 'model_completed';
+      return status === 'pending_model' || status === 'model_completed' || status === 'review_confirmed';
     });
     if (executableIds.length === 0) {
-      message.warning('请选择处于“待执行模型”或“模型执行完毕，待审批确认”的任务');
+      message.warning('请选择处于“待执行模型 / 模型执行完毕 / 纠偏已确认”节点的任务');
       return;
     }
     setExecutionTaskIds(executableIds);
@@ -1004,10 +1006,11 @@ function App() {
   const taskCenterContent = (
     <Space direction="vertical" size={24} style={{ width: '100%' }}>
       <Row gutter={16}>
-        <Col span={5}><Card className="stat-card"><Statistic title="任务总数" value={taskStats.total} /></Card></Col>
-        <Col span={5}><Card className="stat-card"><Statistic title="待执行模型" value={taskStats.pendingModel} /></Card></Col>
-        <Col span={5}><Card className="stat-card"><Statistic title="模型执行中" value={taskStats.running} /></Card></Col>
-        <Col span={5}><Card className="stat-card"><Statistic title="待审批确认" value={taskStats.pendingApproval} /></Card></Col>
+        <Col span={4}><Card className="stat-card"><Statistic title="任务总数" value={taskStats.total} /></Card></Col>
+        <Col span={4}><Card className="stat-card"><Statistic title="待执行模型" value={taskStats.pendingModel} /></Card></Col>
+        <Col span={4}><Card className="stat-card"><Statistic title="模型执行中" value={taskStats.running} /></Card></Col>
+        <Col span={4}><Card className="stat-card"><Statistic title="模型执行完毕" value={taskStats.modelDone} /></Card></Col>
+        <Col span={4}><Card className="stat-card"><Statistic title="纠偏已确认" value={taskStats.reviewConfirmed} /></Card></Col>
         <Col span={4}><Card className="stat-card"><Statistic title="待清理" value={taskStats.pendingClean} /></Card></Col>
       </Row>
 
@@ -1045,7 +1048,8 @@ function App() {
             <Select allowClear style={{ width: '100%' }} value={taskFilters.taskStatus} onChange={(value) => setTaskFilters((prev: TaskFilters) => ({ ...prev, taskStatus: value as TaskStatus | undefined }))}>
               <Select.Option value="pending_model">待执行模型</Select.Option>
               <Select.Option value="model_executing">模型执行中</Select.Option>
-              <Select.Option value="model_completed">模型执行完毕，待审批确认</Select.Option>
+              <Select.Option value="model_completed">模型执行完毕</Select.Option>
+              <Select.Option value="review_confirmed">人工纠偏已确认，待发起审批</Select.Option>
               <Select.Option value="approval_approved">审批通过，待清理</Select.Option>
               <Select.Option value="approval_rejected">审批拒绝，终止</Select.Option>
               <Select.Option value="disposal_completed">处置完毕</Select.Option>
@@ -1071,12 +1075,12 @@ function App() {
           title={(
             <Space>
               <span>任务列表</span>
-              <Tooltip title="仅对待执行模型或模型执行完毕节点任务适用，可对整个 Task 重新过模型">
+              <Tooltip title="仅对“待执行模型 / 模型执行完毕 / 纠偏已确认”节点适用，可对整个 Task 批量过模型或重新过模型，重新过模型会覆盖旧结果">
                 <span>
                   <Button disabled={!canBatchExecute} icon={<PlayCircleOutlined />} onClick={() => openExecutionDrawer(selectedTaskRowKeys)}>批量执行/重新过模型</Button>
                 </span>
               </Tooltip>
-              <Tooltip title="仅对审批通过，待清理节点任务适用">
+              <Tooltip title="仅对“审批通过，待清理”节点任务适用">
                 <span>
                   <Button disabled={!canBatchClean} icon={<DeleteOutlined />} onClick={() => handleCleanTasks(selectedTaskRowKeys)}>批量清理种子</Button>
                 </span>
@@ -1120,20 +1124,27 @@ function App() {
               {
                 title: '操作',
                 key: 'action',
-                width: 260,
+                width: 320,
                 fixed: 'right',
                 render: (_, record: Task) => (
                   <Space wrap>
                     <Button size="small" onClick={() => { setSelectedTask(record); setShowTaskDetail(true); }}>详情</Button>
-                    {(record.status === 'pending_model' || record.status === 'model_completed') && (
+                    {(record.status === 'pending_model' || record.status === 'model_completed' || record.status === 'review_confirmed') && (
                       <Button size="small" type="primary" onClick={() => openExecutionDrawer([record.id])}>
-                        {record.status === 'model_completed' ? '重新过模型' : '执行模型'}
+                        {record.status === 'pending_model' ? '执行模型' : '重新过模型'}
                       </Button>
                     )}
                     {record.status === 'model_completed' && (
+                      <Tooltip title="对单个种子进行人工纠偏后，点击此按钮确认全部纠偏完成，才允许发起审批">
+                        <Button size="small" type="primary" icon={<CheckCircleOutlined />} onClick={() => updateTaskStatus([record.id], 'review_confirmed', '已确认纠偏，任务进入待发起审批节点')}>
+                          确认纠偏完成
+                        </Button>
+                      </Tooltip>
+                    )}
+                    {record.status === 'review_confirmed' && (
                       <>
-                        <Button size="small" type="primary" icon={<CheckCircleOutlined />} onClick={() => updateTaskStatus([record.id], 'approval_approved', '已确认结果并进入审批通过，待清理')}>
-                          确认结果
+                        <Button size="small" type="primary" icon={<CheckCircleOutlined />} onClick={() => updateTaskStatus([record.id], 'approval_approved', '已发起并确认审批通过，进入待清理')}>
+                          发起审批
                         </Button>
                         <Button size="small" danger onClick={() => updateTaskStatus([record.id], 'approval_rejected', '审批已拒绝，任务终止')}>拒绝</Button>
                       </>
@@ -1187,18 +1198,19 @@ function App() {
                 </div>
                 <div className="guide-flow">
                   <span>发起任务</span>
-                  <span>执行模型</span>
+                  <span>执行模型与重跑</span>
+                  <span>人工纠偏</span>
                   <span>审批确认</span>
                   <span>清理处置</span>
                 </div>
                 <Row gutter={[12, 12]}>
                   {[
                     ['1', '选择场景', '先判断本次策略变化是政策放宽还是政策收严。放宽通常关注历史拒绝结果是否需要移除；收严通常关注高风险 CCR 种子是否需要置为无效。'],
-                    ['2', '配置筛选条件', '按市场、Object Type、种子状态等条件圈定范围。收严场景支持 P0/P1 及二级 CCR 区间平铺输入，放宽场景支持审核来源、Policy、Provision。'],
-                    ['3', '确认生成任务', '点击“筛选种子”只查看预览结果，确认范围后点击“确认生成任务”，任务才会进入任务中心的“待执行模型”节点。'],
-                    ['4', '执行模型与重跑', '在任务中心选择任务执行 Hermes / Workflow。若整体结果分布不理想，可对整个 Task 重新过模型，重跑后默认只保留最新一轮结果。'],
-                    ['5', '人工纠偏', '运营可打开单个种子详情，修改最终结论并填写纠偏原因，点击确认后保存人工纠偏结果。'],
-                    ['6', '审批确认与清理', '确认 Task 结果后发起审批。审批通过后进入待清理节点，最终只将建议清除的种子置为无效；建议保留和执行失败种子不清理。'],
+                    ['2', '配置筛选条件', '按市场、Object Type、种子状态等条件圈定范围。收严场景支持 P0/P1 及二级 CCR 区间平铺输入，放宽场景支持审核来源、Policy、Provision（放宽场景不使用行业字段）。'],
+                    ['3', '筛选预览并生成任务', '点击“筛选种子”只查看种子预览结果、不生成任务；确认范围后点击“确认生成任务”，任务才会进入任务中心的“待执行模型”节点。'],
+                    ['4', '执行模型与整批重跑', '在任务中心选择任务执行 Hermes / Workflow。模型结果包含三种状态：建议清除 / 建议保留 / 模型执行失败。运营可基于失败量或整体分布对整个 Task 重新过模型，重跑后默认以最新一批结果覆盖旧结果。'],
+                    ['5', '人工纠偏后点击确认', '运营打开单个种子详情，对结论进行人工纠偏（修改结论 + 填写纠偏原因），纠偏完成后在任务详情点击“确认纠偏完成”，任务才进入“待发起审批”节点。'],
+                    ['6', '发起审批与清理', '纠偏确认后点击发起审批。审批通过后进入待清理节点，最终只将模型或纠偏结论为“建议清除”的种子置为无效；建议保留与模型失败种子不清理。'],
                   ].map(([step, title, desc]) => (
                     <Col span={12} key={step}>
                       <div className="guide-step-card">
@@ -1276,14 +1288,21 @@ function App() {
               <Descriptions.Item label="备注" span={2}>{selectedTask.remark || '-'}</Descriptions.Item>
               <Descriptions.Item label="筛选摘要" span={2}>{taskFilterSummary(selectedTask)}</Descriptions.Item>
             </Descriptions>
-            {(selectedTask.status === 'pending_model' || selectedTask.status === 'model_completed') && (
+            {(selectedTask.status === 'pending_model' || selectedTask.status === 'model_completed' || selectedTask.status === 'review_confirmed') && (
               <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => openExecutionDrawer([selectedTask.id])}>
-                {selectedTask.status === 'model_completed' ? '重新过模型' : '执行模型'}
+                {selectedTask.status === 'pending_model' ? '执行模型' : '重新过模型（覆盖旧结果）'}
               </Button>
             )}
             {selectedTask.status === 'model_completed' && (
+              <Tooltip title="对单个种子详情执行人工纠偏后，在此点击确认所有纠偏完成，之后才允许发起审批">
+                <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => updateTaskStatus([selectedTask.id], 'review_confirmed', '已确认纠偏完成，进入待发起审批节点')}>
+                  确认纠偏完成
+                </Button>
+              </Tooltip>
+            )}
+            {selectedTask.status === 'review_confirmed' && (
               <Space>
-                <Button type="primary" onClick={() => updateTaskStatus([selectedTask.id], 'approval_approved', '已确认结果并进入审批通过，待清理')}>确认结果并发起审批</Button>
+                <Button type="primary" onClick={() => updateTaskStatus([selectedTask.id], 'approval_approved', '已发起并完成审批确认，任务进入审批通过，待清理')}>发起审批</Button>
                 <Button danger onClick={() => updateTaskStatus([selectedTask.id], 'approval_rejected', '审批已拒绝，任务终止')}>审批拒绝</Button>
               </Space>
             )}
